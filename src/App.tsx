@@ -41,7 +41,7 @@ import { SelectionBoundingBox } from './components/canvas/SelectionBoundingBox';
 import { WorkflowPanel } from './components/WorkflowPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ChatPanel, ChatBubble } from './components/ChatPanel';
-import type { CanvasAction } from './hooks/useChatAgent';
+import type { ToolCall, ToolResult } from './hooks/useChatAgent';
 import { ImageEditorModal } from './components/modals/ImageEditorModal';
 import { VideoEditorModal } from './components/modals/VideoEditorModal';
 import { ExpandedMediaModal } from './components/modals/ExpandedMediaModal';
@@ -293,119 +293,128 @@ export default function App() {
     handleGenerateRef.current = handleGenerate;
   }, [handleGenerate]);
 
-  // ===== 画布 Agent：上下文快照 + 动作执行器 =====
-  // 给聊天 Agent 提供当前画布的精简快照，让它知道画布上有哪些节点
-  const buildCanvasContext = React.useCallback(() => {
-    return {
-      nodeCount: nodes.length,
-      selected: selectedNodeIds,
-      nodes: nodes.slice(0, 80).map(n => ({
-        id: n.id,
-        type: n.type,
-        title: n.title || n.type,
-        prompt: (n.prompt || '').slice(0, 140),
-        status: n.status,
-        parentIds: n.parentIds || [],
-      })),
-    };
-  }, [nodes, selectedNodeIds]);
+  // 始终指向最新 nodes，供工具执行器在 generate 后轮询读取节点最终状态
+  const nodesRef = React.useRef(nodes);
+  React.useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
-  // 执行 Agent 返回的画布动作（建点/连线/改/生成/删），返回一句中文总结
-  const executeCanvasActions = React.useCallback(async (actions: CanvasAction[]): Promise<string> => {
+  // ===== 画布 Agent：function-calling 工具执行器 =====
+  // 执行模型发起的一批 tool_calls，逐个返回结构化结果（回喂给模型续上下一轮）。
+  const executeCanvasTool = React.useCallback(async (calls: ToolCall[]): Promise<ToolResult[]> => {
     const NODE_W = 340, GAP_X = 120, GAP_Y = 90;
     const typeMap: Record<string, NodeType> = {
       text: NodeType.TEXT, image: NodeType.IMAGE, video: NodeType.VIDEO,
     };
-    const refToId = new Map<string, string>();
-    const resolveId = (key?: string): string | undefined =>
-      key == null ? undefined : (refToId.get(key) || key);
+    const parseArgs = (tc: ToolCall): any => {
+      try { return JSON.parse(tc.function.arguments || '{}'); } catch { return {}; }
+    };
 
+    // 当前画布快照（含本批已新建的节点），供 get_canvas 返回
     const newNodes: NodeData[] = [];
+    const snapshot = () => {
+      const all = [...nodesRef.current, ...newNodes];
+      return {
+        nodeCount: all.length,
+        nodes: all.slice(0, 120).map(n => ({
+          id: n.id,
+          type: n.type,
+          title: n.title || n.type,
+          prompt: (n.prompt || '').slice(0, 160),
+          status: n.status,
+          parentIds: n.parentIds || [],
+        })),
+      };
+    };
+    const nodeExists = (id?: string) =>
+      !!id && (nodesRef.current.some(n => n.id === id) || newNodes.some(n => n.id === id));
+
     const connectOps: { parent: string; child: string }[] = [];
     const updateOps: { id: string; patch: Partial<NodeData> }[] = [];
     const deleteIds: string[] = [];
-    const generateRefs: string[] = [];
+    const generateTargets: string[] = [];
 
     // 新建节点的起始列：放在现有节点右侧，无节点则放视口中心
-    const baseX = nodes.length
-      ? Math.max(...nodes.map(n => n.x + getNodeWidth(n))) + 320
+    const existing = nodesRef.current;
+    const baseX = existing.length
+      ? Math.max(...existing.map(n => n.x + getNodeWidth(n))) + 320
       : (window.innerWidth / 2 - viewport.x) / viewport.zoom - 170;
-    const baseY = nodes.length
-      ? Math.min(...nodes.map(n => n.y))
+    const baseY = existing.length
+      ? Math.min(...existing.map(n => n.y))
       : (window.innerHeight / 2 - viewport.y) / viewport.zoom - 150;
-
     const posOf = (id?: string): { x: number; y: number } | null => {
       if (!id) return null;
       const nn = newNodes.find(n => n.id === id);
       if (nn) return { x: nn.x, y: nn.y };
-      const en = nodes.find(n => n.id === id);
+      const en = existing.find(n => n.id === id);
       return en ? { x: en.x, y: en.y } : null;
     };
-
     let rootCount = 0;
     const childCount = new Map<string, number>();
-    let created = 0, connected = 0, updated = 0, deleted = 0, generated = 0;
 
-    for (const a of actions) {
-      if (a.op === 'create_node') {
+    // 第一遍：解析每个工具调用，组装结构化变更，并生成对应结果
+    const results: ToolResult[] = [];
+    const pack = (id: string, obj: any): ToolResult => ({ tool_call_id: id, content: JSON.stringify(obj) });
+
+    for (const tc of calls) {
+      const name = tc.function?.name;
+      const a = parseArgs(tc);
+      if (name === 'get_canvas') {
+        results.push(pack(tc.id, snapshot()));
+      } else if (name === 'create_node') {
         const nodeType = typeMap[String(a.nodeType || 'image').toLowerCase()] || NodeType.IMAGE;
         const id = crypto.randomUUID();
-        if (a.ref) refToId.set(a.ref, id);
-
-        const parentIds = (a.parents || [])
-          .map(p => resolveId(p))
-          .filter((x): x is string => !!x);
-
+        const parentIds = (Array.isArray(a.parents) ? a.parents : [])
+          .filter((p: string) => nodeExists(p));
         let x: number, y: number;
         const firstParentPos = parentIds.length ? posOf(parentIds[0]) : null;
         if (firstParentPos) {
-          const pk = parentIds[0];
-          const k = childCount.get(pk) || 0;
-          childCount.set(pk, k + 1);
+          const k = childCount.get(parentIds[0]) || 0;
+          childCount.set(parentIds[0], k + 1);
           x = firstParentPos.x + NODE_W + GAP_X;
           y = firstParentPos.y + k * GAP_Y;
         } else {
-          x = baseX;
-          y = baseY + rootCount * GAP_Y;
-          rootCount++;
+          x = baseX; y = baseY + rootCount * GAP_Y; rootCount++;
         }
-
+        // 生成路由按 node.type 决定（image→图片模型/video→视频模型），model 字段仅作标签，
+        // 与现有 UI 建点行为保持一致（统一 'Banana Pro'）。
         newNodes.push({
-          id,
-          type: nodeType,
-          title: a.title || undefined,
-          x, y,
-          prompt: a.prompt || '',
-          status: NodeStatus.IDLE,
-          model: 'Banana Pro',
-          aspectRatio: a.aspectRatio || 'Auto',
-          resolution: 'Auto',
-          parentIds,
+          id, type: nodeType, title: a.title || undefined, x, y,
+          prompt: a.prompt || '', status: NodeStatus.IDLE, model: 'Banana Pro',
+          aspectRatio: a.aspectRatio || 'Auto', resolution: 'Auto', parentIds,
         });
-        created++;
-      } else if (a.op === 'connect') {
-        const parent = resolveId(a.from);
-        const child = resolveId(a.to);
-        if (parent && child) { connectOps.push({ parent, child }); connected++; }
-      } else if (a.op === 'update_node') {
-        const id = resolveId(a.id);
-        if (id) {
+        results.push(pack(tc.id, { ok: true, id, nodeType: a.nodeType || 'image' }));
+      } else if (name === 'connect') {
+        if (nodeExists(a.from) && nodeExists(a.to)) {
+          connectOps.push({ parent: a.from, child: a.to });
+          results.push(pack(tc.id, { ok: true }));
+        } else {
+          results.push(pack(tc.id, { ok: false, error: '节点 id 不存在（请先 get_canvas 确认）' }));
+        }
+      } else if (name === 'update_node') {
+        if (nodeExists(a.id)) {
           const patch: Partial<NodeData> = {};
           if (a.prompt != null) patch.prompt = a.prompt;
           if (a.title != null) patch.title = a.title;
           if (a.aspectRatio != null) patch.aspectRatio = a.aspectRatio;
-          if (Object.keys(patch).length) { updateOps.push({ id, patch }); updated++; }
+          if (Object.keys(patch).length) updateOps.push({ id: a.id, patch });
+          results.push(pack(tc.id, { ok: true }));
+        } else {
+          results.push(pack(tc.id, { ok: false, error: '节点 id 不存在' }));
         }
-      } else if (a.op === 'delete_node') {
-        const id = resolveId(a.id);
-        if (id) { deleteIds.push(id); deleted++; }
-      } else if (a.op === 'generate') {
-        if (a.target === 'all') generateRefs.push('all');
-        else { const id = resolveId(a.target); if (id) generateRefs.push(id); }
+      } else if (name === 'delete_node') {
+        if (nodeExists(a.id)) { deleteIds.push(a.id); results.push(pack(tc.id, { ok: true })); }
+        else results.push(pack(tc.id, { ok: false, error: '节点 id 不存在' }));
+      } else if (name === 'generate') {
+        generateTargets.push(String(a.target));
+        // 结果在生成完成后回填（占位）
+        results.push(pack(tc.id, { ok: true, pending: true }));
+      } else {
+        results.push(pack(tc.id, { ok: false, error: `未知工具: ${name}` }));
       }
     }
 
-    // 一次性提交画布变更：新增 → 连线 → 改 → 删
+    // 一次性提交结构变更：新增 → 连线 → 改 → 删
     ignoreNextChange.current = false;
     setNodes(prev => {
       let next = [...prev, ...newNodes];
@@ -413,8 +422,7 @@ export default function App() {
         next = next.map(n => {
           const incoming = connectOps.filter(c => c.child === n.id).map(c => c.parent);
           if (!incoming.length) return n;
-          const merged = Array.from(new Set([...(n.parentIds || []), ...incoming]));
-          return { ...n, parentIds: merged };
+          return { ...n, parentIds: Array.from(new Set([...(n.parentIds || []), ...incoming])) };
         });
       }
       if (updateOps.length) {
@@ -425,42 +433,54 @@ export default function App() {
       }
       if (deleteIds.length) {
         const del = new Set(deleteIds);
-        next = next
-          .filter(n => !del.has(n.id))
+        next = next.filter(n => !del.has(n.id))
           .map(n => n.parentIds?.some(p => del.has(p))
-            ? { ...n, parentIds: n.parentIds.filter(p => !del.has(p)) }
-            : n);
+            ? { ...n, parentIds: n.parentIds.filter(p => !del.has(p)) } : n);
       }
       return next;
     });
-
     if (newNodes.length) setSelectedNodeIds(newNodes.map(n => n.id));
 
-    // 触发生成（错峰，等状态提交后用最新的 handleGenerate）
-    let genIds: string[] = [];
-    if (generateRefs.includes('all')) {
-      genIds = newNodes
+    // 处理 generate：等状态提交后触发，并轮询节点最终状态回填结果
+    if (generateTargets.length) {
+      await new Promise(r => setTimeout(r, 350)); // 等 setNodes 落地
+      const allGenIds = nodesRef.current
         .filter(n => n.type === NodeType.IMAGE || n.type === NodeType.VIDEO)
         .map(n => n.id);
-    } else {
-      genIds = generateRefs.filter(id => id !== 'all');
-    }
-    genIds = Array.from(new Set(genIds));
-    if (genIds.length) {
-      generated = genIds.length;
-      genIds.forEach((id, i) => {
-        setTimeout(() => handleGenerateRef.current(id), 300 + i * 400);
-      });
+      const targetIds = Array.from(new Set(
+        generateTargets.flatMap(t => t === 'all' ? allGenIds : [t])
+      )).filter(id => nodesRef.current.some(n => n.id === id));
+
+      // 触发生成（错峰）
+      targetIds.forEach((id, i) => setTimeout(() => handleGenerateRef.current(id), i * 400));
+
+      // 轮询每个目标的最终状态（最长 6 分钟，覆盖视频）
+      const waitForResult = async (id: string) => {
+        const start = Date.now();
+        while (Date.now() - start < 360000) {
+          const n = nodesRef.current.find(x => x.id === id);
+          if (n && n.status === NodeStatus.SUCCESS) return { id, status: 'success', url: n.resultUrl };
+          if (n && n.status === NodeStatus.ERROR) return { id, status: 'error', error: n.errorMessage || '生成失败' };
+          await new Promise(r => setTimeout(r, 800));
+        }
+        return { id, status: 'timeout', error: '生成超时' };
+      };
+      const genResults = await Promise.all(targetIds.map(waitForResult));
+
+      // 回填 generate 调用的结果
+      let gi = 0;
+      for (let i = 0; i < calls.length; i++) {
+        if (calls[i].function?.name === 'generate') {
+          const t = String(parseArgs(calls[i]).target);
+          const mine = t === 'all' ? genResults : genResults.filter(r => r.id === t);
+          results[i] = pack(calls[i].id, { ok: true, results: mine });
+          gi++;
+        }
+      }
     }
 
-    const parts: string[] = [];
-    if (created) parts.push(`新建 ${created} 个节点`);
-    if (connected) parts.push(`连线 ${connected} 处`);
-    if (updated) parts.push(`修改 ${updated} 个`);
-    if (deleted) parts.push(`删除 ${deleted} 个`);
-    if (generated) parts.push(`开始生成 ${generated} 个`);
-    return parts.length ? `✅ 已在画布执行：${parts.join('、')}。` : '';
-  }, [nodes, viewport, setNodes, setSelectedNodeIds]);
+    return results;
+  }, [viewport, setNodes, setSelectedNodeIds]);
 
   // Create new canvas
   const handleNewCanvas = () => {
@@ -1632,7 +1652,7 @@ export default function App() {
       {!storyboardGenerator.isModalOpen && (
         <>
           <ChatBubble onClick={toggleChat} isOpen={isChatOpen} />
-          <ChatPanel isOpen={isChatOpen} onClose={closeChat} isDraggingNode={isDraggingNodeToChat} canvasTheme={canvasTheme} getCanvasContext={buildCanvasContext} onCanvasActions={executeCanvasActions} />
+          <ChatPanel isOpen={isChatOpen} onClose={closeChat} isDraggingNode={isDraggingNodeToChat} canvasTheme={canvasTheme} onToolCalls={executeCanvasTool} />
         </>
       )}
 

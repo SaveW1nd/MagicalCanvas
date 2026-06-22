@@ -10,7 +10,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, History, Paperclip, Send, Sparkles, Plus, Loader2, ChevronLeft, Trash2, MessageSquare } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
-import { useChatAgent, ChatMessage as ChatMessageType, ChatSession, CanvasAction } from '../hooks/useChatAgent';
+import { useChatAgent, ChatMessage as ChatMessageType, ChatSession, ToolCall, ToolResult } from '../hooks/useChatAgent';
 
 // ============================================================================
 // TYPES
@@ -30,10 +30,8 @@ interface ChatPanelProps {
     isDraggingNode?: boolean;
     onNodeDrop?: (nodeId: string, url: string, type: 'image' | 'video') => void;
     canvasTheme?: 'dark' | 'light';
-    /** 返回当前画布快照，作为画布 Agent 的上下文 */
-    getCanvasContext?: () => unknown | null;
-    /** 执行画布 Agent 返回的动作，返回中文总结 */
-    onCanvasActions?: (actions: CanvasAction[]) => Promise<string | void> | string | void;
+    /** 执行画布 Agent 的工具调用，返回每个调用的结果（回喂给模型续上下一轮） */
+    onToolCalls?: (calls: ToolCall[]) => Promise<ToolResult[]>;
 }
 
 // ============================================================================
@@ -46,8 +44,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     userName = '创作者',
     isDraggingNode = false,
     canvasTheme = 'dark',
-    getCanvasContext,
-    onCanvasActions,
+    onToolCalls,
 }) => {
     // --- State ---
     const [message, setMessage] = useState('');
@@ -72,7 +69,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         loadSession,
         deleteSession,
         hasMessages,
-    } = useChatAgent({ getCanvasContext, onCanvasActions });
+    } = useChatAgent({ onToolCalls });
 
     // Refs
     const messagesEndRef = useRef<HTMLDivElement>(null);

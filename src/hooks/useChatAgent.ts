@@ -1,8 +1,10 @@
 /**
  * useChatAgent.ts
- * 
- * Custom hook for chat agent interactions.
- * Manages messages, sessions, topics, and API communication.
+ *
+ * 聊天 Agent hook（function-calling 版）。
+ * 管理消息、会话、主题，并驱动**多轮工具循环**：
+ *   POST /api/chat → 收到 tool_calls → 调 onToolCalls 在画布执行 → 拿结果
+ *   → POST /api/chat/tools 续上 → 直到模型给出最终回复(done)，上限 MAX_AGENT_STEPS 轮。
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -30,26 +32,26 @@ export interface ChatSession {
     messageCount: number;
 }
 
-/** 画布动作（由后端 AI 返回，前端执行） */
-export interface CanvasAction {
-    op: 'create_node' | 'connect' | 'update_node' | 'generate' | 'delete_node';
-    ref?: string;
-    nodeType?: 'text' | 'image' | 'video';
-    title?: string;
-    prompt?: string;
-    aspectRatio?: string;
-    parents?: string[];
-    from?: string;
-    to?: string;
-    id?: string;
-    target?: string;
+/** 模型发起的工具调用（OpenAI tool_calls 结构） */
+export interface ToolCall {
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
 }
 
+/** 工具执行结果，回传给后端续上下一轮 */
+export interface ToolResult {
+    tool_call_id: string;
+    /** 结果内容（JSON 字符串或纯文本），会作为 role:"tool" 消息喂回模型 */
+    content: string;
+}
+
+/** 一个 turn 内最多自主调用工具的轮数（与后端 MAX_AGENT_STEPS 对齐） */
+const MAX_AGENT_STEPS = 10;
+
 interface UseChatAgentOptions {
-    /** 返回当前画布快照，作为 Agent 上下文；返回 null 则按普通聊天模式 */
-    getCanvasContext?: () => unknown | null;
-    /** 收到画布动作时回调，执行后可返回一句中文总结追加到消息末尾 */
-    onCanvasActions?: (actions: CanvasAction[]) => Promise<string | void> | string | void;
+    /** 收到模型的工具调用时回调：在画布执行并返回每个调用的结果 */
+    onToolCalls?: (calls: ToolCall[]) => Promise<ToolResult[]>;
 }
 
 interface UseChatAgentReturn {
@@ -68,30 +70,66 @@ interface UseChatAgentReturn {
     hasMessages: boolean;
 }
 
-/** 流式展示时隐藏未闭合的 json 动作块（避免用户看到一大段 JSON 在打字） */
-function stripPartialActionBlock(text: string): string {
-    const idx = text.indexOf('```');
-    if (idx === -1) return text;
-    // 已闭合的代码块保留给 done 处理；流式期间直接截到第一个 ``` 之前
-    return text.slice(0, idx).trimEnd();
-}
-
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
-/**
- * Generate a unique session ID
- */
+/** Generate a unique session ID */
 function generateSessionId(): string {
     return `chat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-/**
- * Generate a unique message ID
- */
+/** Generate a unique message ID */
 function generateMessageId(): string {
     return `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/** 一个 turn 内某次模型调用的终止事件 */
+type TerminalEvent =
+    | { type: 'done'; response: string; topic?: string | null }
+    | { type: 'tool_calls'; tool_calls: ToolCall[]; content: string };
+
+/**
+ * 消费一条 SSE 流直到结束。
+ * 边读边把文字增量交给 onDelta 渲染；topic 事件交给 onTopic；
+ * 返回该次调用的终止事件（done 或 tool_calls）。
+ */
+async function consumeChatStream(
+    response: Response,
+    onDelta: (text: string) => void,
+    onTopic: (topic: string) => void,
+): Promise<TerminalEvent> {
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let terminal: TerminalEvent | null = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt: any;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+            if (evt.type === 'delta' && evt.text) {
+                onDelta(evt.text);
+            } else if (evt.type === 'tool_calls') {
+                terminal = { type: 'tool_calls', tool_calls: evt.tool_calls || [], content: evt.content || '' };
+            } else if (evt.type === 'done') {
+                terminal = { type: 'done', response: evt.response || '', topic: evt.topic };
+            } else if (evt.type === 'topic') {
+                if (evt.topic) onTopic(evt.topic);
+            } else if (evt.type === 'error') {
+                throw new Error(evt.error || 'Chat failed');
+            }
+        }
+    }
+
+    if (!terminal) throw new Error('连接中断，未收到完整回复');
+    return terminal;
 }
 
 // ============================================================================
@@ -115,9 +153,7 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
 
     // --- Callbacks ---
 
-    /**
-     * Initialize a new session if needed
-     */
+    /** Initialize a new session if needed */
     const ensureSession = useCallback(() => {
         if (!sessionId) {
             const newSessionId = generateSessionId();
@@ -127,9 +163,7 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
         return sessionId;
     }, [sessionId]);
 
-    /**
-     * Fetch all chat sessions from the server
-     */
+    /** Fetch all chat sessions from the server */
     const refreshSessions = useCallback(async () => {
         setIsLoadingSessions(true);
         try {
@@ -145,9 +179,7 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
         }
     }, []);
 
-    /**
-     * Load a specific session by ID
-     */
+    /** Load a specific session by ID */
     const loadSession = useCallback(async (targetSessionId: string) => {
         setIsLoading(true);
         setError(null);
@@ -181,19 +213,11 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
         }
     }, []);
 
-    /**
-     * Delete a session
-     */
+    /** Delete a session */
     const deleteSession = useCallback(async (targetSessionId: string) => {
         try {
-            await fetch(`/api/chat/sessions/${targetSessionId}`, {
-                method: 'DELETE',
-            });
-
-            // Refresh sessions list
+            await fetch(`/api/chat/sessions/${targetSessionId}`, { method: 'DELETE' });
             await refreshSessions();
-
-            // If we deleted the current session, start a new one
             if (targetSessionId === sessionId) {
                 setMessages([]);
                 setTopic(null);
@@ -205,7 +229,7 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
     }, [sessionId, refreshSessions]);
 
     /**
-     * Send a message to the chat agent
+     * 发送一条消息并驱动多轮工具循环。
      */
     const sendMessage = useCallback(async (
         content: string,
@@ -225,93 +249,96 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
         };
         setMessages(prev => [...prev, userMessage]);
 
-        // 画布 Agent 上下文（存在则后端启用操作画布能力）
-        let canvasContext: unknown | null = null;
-        try { canvasContext = optionsRef.current?.getCanvasContext?.() ?? null; } catch { canvasContext = null; }
+        // 整个 turn 共用一条 assistant 气泡，文字增量持续累积
+        const aiMessageId = generateMessageId();
+        let aiText = '';
+        const upsertAi = (text: string) => {
+            setMessages(prev => {
+                const idx = prev.findIndex(m => m.id === aiMessageId);
+                const msg: ChatMessage = { id: aiMessageId, role: 'assistant', content: text, timestamp: new Date() };
+                if (idx === -1) return [...prev, msg];
+                const next = [...prev];
+                next[idx] = { ...next[idx], content: text };
+                return next;
+            });
+        };
+        const onDelta = (text: string) => { aiText += text; upsertAi(aiText); };
+        const onTopic = (t: string) => setTopic(t);
 
         try {
-            const response = await fetch('/api/chat', {
+            // 第 1 轮：发用户消息
+            let resp = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     sessionId: currentSessionId,
                     message: content,
-                    canvasContext: canvasContext || undefined,
                     media: media ? media.map(m => ({
                         type: m.type,
-                        // 库内路径直接传 url（后端历史记录直接引用，不重复存盘）；data URL 不传避免体积翻倍
+                        // 库内路径直接传 url；data URL 不传避免体积翻倍
                         url: m.url && !m.url.startsWith('data:') ? m.url : undefined,
-                        base64: m.base64 || m.url, // Use base64 if available, otherwise URL
+                        base64: m.base64 || m.url,
                     })) : undefined,
                 }),
             });
-
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.error || response.statusText);
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(errData.error || resp.statusText);
             }
 
-            // SSE 流式接收：delta 增量实时渲染到一条占位的 AI 消息上
-            const aiMessageId = generateMessageId();
-            let aiText = '';
-            let gotDone = false;
-            const upsertAiMessage = (text: string) => {
-                setMessages(prev => {
-                    const idx = prev.findIndex(m => m.id === aiMessageId);
-                    const msg: ChatMessage = { id: aiMessageId, role: 'assistant', content: text, timestamp: new Date() };
-                    if (idx === -1) return [...prev, msg];
-                    const next = [...prev];
-                    next[idx] = { ...next[idx], content: text };
-                    return next;
-                });
-            };
+            let terminal = await consumeChatStream(resp, onDelta, onTopic);
 
-            const reader = response.body!.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    let evt: any;
-                    try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-                    if (evt.type === 'delta' && evt.text) {
-                        aiText += evt.text;
-                        // 流式期间隐藏 json 动作块，避免用户看到一大段 JSON
-                        upsertAiMessage(stripPartialActionBlock(aiText));
-                    } else if (evt.type === 'done') {
-                        gotDone = true;
-                        upsertAiMessage(evt.response || stripPartialActionBlock(aiText));
-                        if (evt.topic) setTopic(evt.topic);
-                        setIsLoading(false); // 回复已完整，标题生成不再转圈
-                        // 执行画布动作并把总结追加到本条 AI 消息
-                        if (Array.isArray(evt.actions) && evt.actions.length && optionsRef.current?.onCanvasActions) {
-                            try {
-                                const summary = await optionsRef.current.onCanvasActions(evt.actions as CanvasAction[]);
-                                if (summary) {
-                                    const base = evt.response || stripPartialActionBlock(aiText);
-                                    upsertAiMessage(`${base}\n\n${summary}`);
-                                }
-                            } catch (e) {
-                                console.error('[CanvasAgent] execute actions failed:', e);
-                            }
-                        }
-                    } else if (evt.type === 'topic') {
-                        if (evt.topic) setTopic(evt.topic);
-                    } else if (evt.type === 'error') {
-                        throw new Error(evt.error || 'Chat failed');
-                    }
+            // 多轮工具循环
+            let steps = 0;
+            while (terminal.type === 'tool_calls') {
+                if (steps >= MAX_AGENT_STEPS) {
+                    upsertAi(`${aiText}\n\n⚠️ 已达到本轮最多 ${MAX_AGENT_STEPS} 步工具调用上限，已停止。`);
+                    break;
                 }
-            }
-            if (!gotDone && !aiText) {
-                throw new Error('连接中断，未收到回复');
+                steps++;
+
+                // 渲染"执行中"提示
+                upsertAi(`${aiText}${aiText ? '\n\n' : ''}🔧 正在执行画布操作…`);
+
+                // 在画布执行工具，拿结果
+                let results: ToolResult[] = [];
+                try {
+                    results = optionsRef.current?.onToolCalls
+                        ? await optionsRef.current.onToolCalls(terminal.tool_calls)
+                        : terminal.tool_calls.map(tc => ({
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ error: '前端未挂载工具执行器' }),
+                        }));
+                } catch (e) {
+                    console.error('[Agent] execute tool calls failed:', e);
+                    results = terminal.tool_calls.map(tc => ({
+                        tool_call_id: tc.id,
+                        content: JSON.stringify({ error: String((e as Error)?.message || e) }),
+                    }));
+                }
+
+                // 还原文字（去掉"执行中"提示，后续增量会接着累积）
+                upsertAi(aiText);
+
+                // 续上：回传工具结果
+                resp = await fetch('/api/chat/tools', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: currentSessionId, toolResults: results }),
+                });
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.error || resp.statusText);
+                }
+                terminal = await consumeChatStream(resp, onDelta, onTopic);
             }
 
-            // Refresh sessions list to show the new/updated session
+            // 最终回复：用后端权威的完整文本覆盖
+            if (terminal.type === 'done') {
+                upsertAi(terminal.response || aiText);
+                if (terminal.topic) setTopic(terminal.topic);
+            }
+
             await refreshSessions();
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
@@ -322,9 +349,7 @@ export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn 
         }
     }, [ensureSession, refreshSessions]);
 
-    /**
-     * Start a new chat session
-     */
+    /** Start a new chat session */
     const startNewChat = useCallback(() => {
         setMessages([]);
         setTopic(null);

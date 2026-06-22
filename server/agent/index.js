@@ -1,22 +1,32 @@
 /**
  * agent/index.js
- * 
- * Main entry point for the LangGraph chat agent.
- * Exports the compiled graph and utility functions.
- * 
- * NOTE: Currently implemented in JavaScript/LangGraph.js for simplicity.
- * If more advanced agent capabilities are needed (complex tool chains,
- * multi-agent systems, advanced memory), consider migrating to Python
- * LangGraph which has a more mature and feature-rich ecosystem.
+ *
+ * 画布 Agent 的后端编排（function-calling 版）。
+ *
+ * 架构：客户端驱动的多轮工具循环。
+ *  - 前端每发一条用户消息 → sendMessage 开启一个 turn；
+ *  - 模型返回 tool_calls → 路由经 SSE 下发给前端 → 前端在画布执行并回传结果；
+ *  - 前端调 submitToolResults 续上 → 模型据结果决定继续调用工具或给出最终回复(stop)。
+ *  - 一个 turn 内的工具消息栈临时存在 session.pending 里；历史只持久化「干净视图」
+ *    （用户消息 + 最终 assistant 文本），供侧边栏会话列表使用。
+ *
+ * 工具调用在画布侧自行模拟（toolProtocol.js 注入+解析），后端只需纯聊天 grok 网关。文本模型默认 grok-4.20-fast。
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { getKey } from "../config.js";
 import { gpt2apiChat } from "../services/gpt2api.js";
-import { CHAT_AGENT_SYSTEM_PROMPT, CANVAS_AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
+import { AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
+import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
+import { buildToolSystemPrompt, parseToolCalls, flattenForPlainChat } from "./toolProtocol.js";
+
+// 工具系统指令块（只构建一次）
+const TOOL_SYSTEM_PROMPT = buildToolSystemPrompt(TOOL_SCHEMAS);
+
+/** 一个 turn 内最多自主调用工具的轮数（防失控成本），由路由侧据此兜底。 */
+export const MAX_AGENT_STEPS = 10;
 
 // 读取 gpt2api 文本配置
 function getTextConfig() {
@@ -27,48 +37,21 @@ function getTextConfig() {
     };
 }
 
-/** 将会话内的 LangChain 消息转换为 OpenAI 兼容消息
- *  canvasContext 存在时使用「画布 Agent」系统提示词（具备操作画布的能力）。 */
-function toOpenAIMessages(messages, useCanvasAgent) {
-    const system = useCanvasAgent ? CANVAS_AGENT_SYSTEM_PROMPT : CHAT_AGENT_SYSTEM_PROMPT;
-    const out = [{ role: 'system', content: system }];
-    for (const m of messages) {
-        const role = m._getType?.() === 'human' ? 'user' : 'assistant';
-        out.push({ role, content: m.content });
-    }
-    return out;
-}
-
-/** 从 AI 回复里提取画布动作 JSON（容忍 markdown 代码块、前后文字）。返回 { actions, cleanText } */
-function extractCanvasActions(text) {
-    const raw = String(text || '');
-    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (!fence) return { actions: null, cleanText: raw };
-    let parsed = null;
-    try {
-        const obj = JSON.parse(fence[1].trim());
-        if (obj && Array.isArray(obj.actions)) parsed = obj.actions;
-    } catch { /* 非动作 JSON（如普通提示词块），原样保留 */ }
-    if (!parsed) return { actions: null, cleanText: raw };
-    // 把动作 JSON 块从展示文本里移除，只保留对话文字
-    const cleanText = raw.replace(fence[0], '').trim();
-    return { actions: parsed, cleanText };
-}
-
 /** 基于会话生成简短主题标题（使用 gpt2api 文本模型） */
 export async function generateTopicTitle(messages) {
     const { apiKey, baseUrl, model } = getTextConfig();
     if (!apiKey) return 'New Chat';
 
-    // 仅取首条用户文本作为生成依据，避免发送图片
-    const firstUser = messages.find(m => m._getType?.() === 'human');
-    const userText = firstUser ? (typeof firstUser.content === 'string' ? firstUser.content : '用户分享了图片/视频') : '';
+    const firstUser = messages.find(m => m.role === 'user');
+    const userText = firstUser
+        ? (typeof firstUser.content === 'string' ? firstUser.content : '用户分享了图片/视频')
+        : '';
 
     const oaMessages = [
         { role: 'system', content: TOPIC_GENERATION_PROMPT },
         { role: 'user', content: userText || 'New conversation' },
     ];
-    // maxTokens 不能太小：思考型模型（gpt-5 系）会先消耗推理 token，给太少会导致正文为空
+    // maxTokens 不能太小：思考型模型会先消耗推理 token，给太少会导致正文为空
     const title = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey, temperature: 0.3, maxTokens: 1024 });
     return (title || 'New Chat').trim().replace(/^["']|["']$/g, '').slice(0, 40) || 'New Chat';
 }
@@ -179,80 +162,32 @@ function persistMediaToLibrary(m, idx) {
 // ============================================================================
 
 /**
- * In-memory cache for active sessions
- * Sessions are also persisted to disk after each message
+ * 内存中的活跃会话缓存。
+ * session.messages 为「干净视图」纯对象数组：{ role:'user'|'assistant', content:string, media? }。
+ * session.pending（可选）保存进行中 turn 的工具消息栈，turn 结束后清空，不落盘。
  */
 const sessionCache = new Map();
 
-/**
- * Convert multimodal content to text representation for serialization
- * This ensures context is preserved without huge base64 data
- */
+/** 多模态 content（含 image_url）转成可序列化的纯文本，避免存巨大 base64 */
 function contentToText(content) {
-    if (typeof content === 'string') {
-        return content;
-    }
-
+    if (typeof content === 'string') return content;
     if (Array.isArray(content)) {
         const parts = [];
         let imageCount = 0;
-
         for (const part of content) {
-            if (part.type === 'text') {
-                parts.push(part.text);
-            } else if (part.type === 'image_url') {
-                imageCount++;
-                parts.push(`[IMAGE ${imageCount} ATTACHED]`);
-            }
+            if (part.type === 'text') parts.push(part.text);
+            else if (part.type === 'image_url') { imageCount++; parts.push(`[IMAGE ${imageCount} ATTACHED]`); }
         }
-
         return parts.join('\n');
     }
-
     return JSON.stringify(content);
 }
 
-/**
- * Convert LangChain messages to serializable format
- * Multimodal messages are converted to text with [IMAGE ATTACHED] markers
- */
-function serializeMessages(messages) {
-    return messages.map(msg => ({
-        role: msg._getType?.() === 'human' ? 'user' : 'assistant',
-        content: contentToText(msg.content),
-        media: msg.additional_kwargs?.media,
-        timestamp: new Date().toISOString()
-    }));
-}
-
-/**
- * Convert serialized messages back to LangChain format
- * All messages are now stored as text (images converted to markers)
- */
-function deserializeMessages(messages) {
-    return messages.map(msg => {
-        if (msg.role === 'user') {
-            const message = new HumanMessage(msg.content);
-            if (msg.media) {
-                message.additional_kwargs = { media: msg.media };
-            }
-            return message;
-        } else {
-            return new AIMessage(msg.content);
-        }
-    });
-}
-
-/**
- * Get the file path for a session
- */
 function getSessionPath(sessionId) {
     return path.join(CHATS_DIR, `${sessionId}.json`);
 }
 
-/**
- * Save a session to disk
- */
+/** 保存会话到磁盘（仅持久化干净视图，不含 pending 工具栈） */
 function saveSession(sessionId, session) {
     const filePath = getSessionPath(sessionId);
     const data = {
@@ -260,27 +195,32 @@ function saveSession(sessionId, session) {
         topic: session.topic,
         createdAt: session.createdAt,
         updatedAt: new Date().toISOString(),
-        messages: serializeMessages(session.messages)
+        messages: session.messages.map(m => ({
+            role: m.role,
+            content: m.content,
+            media: m.media,
+            timestamp: m.timestamp || new Date().toISOString(),
+        })),
     };
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-/**
- * Load a session from disk
- */
 function loadSession(sessionId) {
     const filePath = getSessionPath(sessionId);
-    if (!fs.existsSync(filePath)) {
-        return null;
-    }
-
+    if (!fs.existsSync(filePath)) return null;
     try {
         const content = fs.readFileSync(filePath, 'utf8');
         const data = JSON.parse(content);
         return {
-            messages: deserializeMessages(data.messages),
+            messages: (data.messages || []).map(m => ({
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                content: typeof m.content === 'string' ? m.content : contentToText(m.content),
+                media: m.media,
+                timestamp: m.timestamp,
+            })),
             topic: data.topic,
-            createdAt: new Date(data.createdAt)
+            createdAt: new Date(data.createdAt),
+            pending: null,
         };
     } catch (err) {
         console.error(`Failed to load session ${sessionId}:`, err);
@@ -288,97 +228,48 @@ function loadSession(sessionId) {
     }
 }
 
-/**
- * Get or create a chat session
- * @param {string} sessionId - Unique session identifier
- * @returns {object} Session object
- */
 export function getSession(sessionId) {
-    // Check cache first
-    if (sessionCache.has(sessionId)) {
-        return sessionCache.get(sessionId);
-    }
-
-    // Try to load from disk
+    if (sessionCache.has(sessionId)) return sessionCache.get(sessionId);
     const loaded = loadSession(sessionId);
-    if (loaded) {
-        sessionCache.set(sessionId, loaded);
-        return loaded;
-    }
-
-    // Create new session
-    const newSession = {
-        messages: [],
-        topic: null,
-        createdAt: new Date(),
-    };
+    if (loaded) { sessionCache.set(sessionId, loaded); return loaded; }
+    const newSession = { messages: [], topic: null, createdAt: new Date(), pending: null };
     sessionCache.set(sessionId, newSession);
     return newSession;
 }
 
-/**
- * Delete a chat session
- * @param {string} sessionId - Session to delete
- * @returns {boolean} Whether session existed and was deleted
- */
 export function deleteSession(sessionId) {
     sessionCache.delete(sessionId);
-
     const filePath = getSessionPath(sessionId);
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        return true;
-    }
+    if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
     return false;
 }
 
-/**
- * List all sessions from disk (for chat history)
- * @returns {Array} Array of session summaries
- */
 export function listSessions() {
-    if (!fs.existsSync(CHATS_DIR)) {
-        return [];
-    }
-
+    if (!fs.existsSync(CHATS_DIR)) return [];
     const files = fs.readdirSync(CHATS_DIR).filter(f => f.endsWith('.json'));
     const sessions = [];
-
     for (const file of files) {
         try {
-            const filePath = path.join(CHATS_DIR, file);
-            const content = fs.readFileSync(filePath, 'utf8');
-            const data = JSON.parse(content);
+            const data = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, file), 'utf8'));
             sessions.push({
                 id: data.id,
                 topic: data.topic || "New Chat",
                 createdAt: data.createdAt,
                 updatedAt: data.updatedAt,
-                messageCount: data.messages?.length || 0
+                messageCount: data.messages?.length || 0,
             });
         } catch (err) {
             console.error(`Failed to read session file ${file}:`, err);
         }
     }
-
-    // Sort by most recent first
     return sessions.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
 }
 
-/**
- * Get full session data (for loading a specific chat)
- * @param {string} sessionId - Session ID
- * @returns {object|null} Full session data with messages
- */
 export function getSessionData(sessionId) {
     const filePath = getSessionPath(sessionId);
-    if (!fs.existsSync(filePath)) {
-        return null;
-    }
-
+    if (!fs.existsSync(filePath)) return null;
     try {
-        const content = fs.readFileSync(filePath, 'utf8');
-        return JSON.parse(content);
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
     } catch (err) {
         console.error(`Failed to load session data ${sessionId}:`, err);
         return null;
@@ -386,140 +277,178 @@ export function getSessionData(sessionId) {
 }
 
 // ============================================================================
-// CHAT FUNCTIONS
+// AGENT TURN（多轮工具循环）
 // ============================================================================
 
 /**
- * Send a message to the chat agent and get a response
- * @param {string} sessionId - Session identifier
- * @param {string} content - User message content
- * @param {Array} media - Optional media attachments [{ type, url, base64 }, ...]
- * @param {string} apiKey - Google AI API key
- * @returns {Promise<object>} { response: string, topic?: string }
+ * 调用一次模型：在画布侧自行实现 function calling。
+ * 注入工具协议到 system + 扁平化历史 → 调**纯聊天**后端（任意 grok 网关均可）→
+ * 流式时剥离 <tool_calls> XML（不给用户看裸 XML）→ 解析工具调用。
+ * 返回 { content, tool_calls, finish_reason }（与原契约一致）。
  */
-export async function sendMessage(sessionId, content, media, apiKey, onDelta, canvasContext) {
-    const session = getSession(sessionId);
-    const { apiKey: gptKey, baseUrl, model } = getTextConfig();
-    const useCanvasAgent = !!canvasContext;
+async function runModel(working, onDelta) {
+    const { apiKey, baseUrl, model } = getTextConfig();
+    if (!apiKey) throw new Error('未配置文字模型 KEY，请在「设置」中填写后再使用聊天');
 
-    // Debug: Log session state
-    console.log(`[Chat] Session ${sessionId} has ${session.messages.length} existing messages`);
+    const system = `${AGENT_SYSTEM_PROMPT}\n\n${TOOL_SYSTEM_PROMPT}`;
+    const messages = [{ role: 'system', content: system }, ...flattenForPlainChat(working)];
 
-    // 画布 Agent：把当前画布快照作为上下文前缀拼到用户消息里（仅本轮使用，不污染历史观感）
-    let effectiveContent = content;
-    if (useCanvasAgent) {
-        const ctxStr = typeof canvasContext === 'string' ? canvasContext : JSON.stringify(canvasContext);
-        effectiveContent = `【当前画布上下文】\n${ctxStr}\n\n【用户】\n${content || ''}`;
-    }
-
-    // Build the user message content
-    let messageContent;
-    if (media && Array.isArray(media) && media.length > 0) {
-        // Multimodal message with images/videos
-        const contentParts = [{ type: "text", text: effectiveContent || "What do you see in these images?" }];
-
-        for (const m of media) {
-            // Resolve file URLs to base64 if needed
-            const resolvedBase64 = resolveImageToBase64(m.base64);
-            if (!resolvedBase64) continue;
-
-            const mimeType = m.type === 'video' ? 'video/mp4' : 'image/png';
-            // Extract base64 data if it's a data URL
-            const base64Data = resolvedBase64.includes(',')
-                ? resolvedBase64.split(',')[1]
-                : resolvedBase64;
-
-            contentParts.push({
-                type: "image_url",
-                image_url: {
-                    url: `data:${mimeType};base64,${base64Data}`,
-                },
-            });
+    // 流式剥离：只把第一个工具块之前的正文推给前端；尾部疑似半个标签先按住（最终 done 会补全）
+    let acc = '', emitted = 0;
+    const wrappedDelta = (delta) => {
+        if (!delta) return;
+        acc += delta;
+        const idx = acc.search(/<tool_call|<function_call|<invoke\s/i);
+        let cleanLen = idx === -1 ? acc.length : idx;
+        if (idx === -1) {
+            const lt = acc.lastIndexOf('<');
+            if (lt >= emitted && /^<[a-z_]*$/i.test(acc.slice(lt))) cleanLen = lt; // 按住未完成的 <tag
         }
+        if (cleanLen > emitted) { try { onDelta?.(acc.slice(emitted, cleanLen)); } catch { /* 忽略 */ } emitted = cleanLen; }
+    };
 
-        messageContent = contentParts;
-    } else {
-        messageContent = effectiveContent;
+    const fullText = await gpt2apiChat({ messages, model, baseUrl, apiKey, onDelta: wrappedDelta });
+    const { toolCalls, cleanText } = parseToolCalls(fullText, TOOL_NAMES);
+    return {
+        content: cleanText,
+        tool_calls: toolCalls,
+        finish_reason: toolCalls.length ? 'tool_calls' : 'stop',
+    };
+}
+
+/** 构造发给模型的用户消息 content：有媒体则用多模态 parts，否则纯文本 */
+function buildUserContent(content, media) {
+    if (media && Array.isArray(media) && media.length > 0) {
+        const parts = [{ type: 'text', text: content || 'What do you see in these images?' }];
+        for (const m of media) {
+            const resolved = resolveImageToBase64(m.base64 || m.url);
+            if (!resolved) continue;
+            const mimeType = m.type === 'video' ? 'video/mp4' : 'image/png';
+            const base64Data = resolved.includes(',') ? resolved.split(',')[1] : resolved;
+            parts.push({ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } });
+        }
+        return parts;
     }
+    return content || '';
+}
 
-    // Debug logging
+/** 把模型返回转成可加入消息栈的 assistant 消息 */
+function assistantMessageFromResult(result) {
+    const msg = { role: 'assistant', content: result.content || '' };
+    if (result.tool_calls && result.tool_calls.length) {
+        msg.tool_calls = result.tool_calls;
+        if (!result.content) msg.content = null; // OpenAI 规范：带 tool_calls 时 content 可为 null
+    }
+    return msg;
+}
 
+/**
+ * 收尾或暂停：
+ * - finish_reason=tool_calls → 暂停，保存 pending 工具栈，返回 { finish:'tool_calls', tool_calls }
+ * - 否则(stop) → 持久化最终 assistant 文本到历史，生成标题，返回 { finish:'stop' }
+ */
+function finalizeOrPause(session, sessionId, working, result, accumulatedText) {
+    const wantsTools = result.finish_reason === 'tool_calls' && result.tool_calls && result.tool_calls.length > 0;
 
-    // Add user message to session
-    const userMessage = new HumanMessage(messageContent);
-
-    // Attach metadata for persistence (excluding base64 to save space).
-    // 上传的图片落盘到 library，历史记录里只存 /library 路径——
-    // 否则重开软件后 base64 没保存，历史里的图片显示不出来。
-    if (media && Array.isArray(media)) {
-        userMessage.additional_kwargs = {
-            ...userMessage.additional_kwargs,
-            media: media
-                .map((m, idx) => ({ ...m, url: persistMediaToLibrary(m, idx), base64: undefined }))
-                .filter(m => !!m.url),
+    if (wantsTools) {
+        session.pending = { working, assistantText: accumulatedText };
+        return {
+            finish: 'tool_calls',
+            tool_calls: result.tool_calls,
+            content: result.content || '',
+            messageCount: session.messages.length,
         };
     }
 
-    session.messages.push(userMessage);
+    // turn 结束：写入最终 assistant 文本（一个 turn 内多段文字合并）
+    const finalText = (accumulatedText || result.content || '').trim();
+    session.messages.push({ role: 'assistant', content: finalText, timestamp: new Date().toISOString() });
+    session.pending = null;
 
-    console.log(`[Chat] Sending ${session.messages.length} messages to gpt2api (${model})`);
-
-    // Call gpt2api (OpenAI-compatible chat completions)
-    const oaMessages = toOpenAIMessages(session.messages, useCanvasAgent);
-    const responseText = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey: gptKey, onDelta });
-
-    // 解析画布动作（仅画布 Agent 模式）；展示文本去掉 json 动作块
-    const { actions, cleanText } = useCanvasAgent
-        ? extractCanvasActions(responseText)
-        : { actions: null, cleanText: responseText };
-
-    const aiResponse = new AIMessage(cleanText || responseText || '');
-    session.messages.push(aiResponse);
-
-    // 历史里把本轮用户消息存为「干净版」：原始文字 + 媒体标记，
-    // 不保留画布上下文/base64，避免历史膨胀与下一轮重复注入。
-    if (typeof messageContent !== 'string' || useCanvasAgent) {
-        const textVersion = typeof messageContent !== 'string'
-            ? contentToText([{ type: 'text', text: content || '' },
-                ...(Array.isArray(messageContent) ? messageContent.filter(p => p.type === 'image_url') : [])])
-            : (content || '');
-        const userMsgIndex = session.messages.length - 2;
-        const originalMsg = session.messages[userMsgIndex];
-
-        const newMsg = new HumanMessage(textVersion);
-        if (originalMsg.additional_kwargs) {
-            newMsg.additional_kwargs = originalMsg.additional_kwargs;
-        }
-        session.messages[userMsgIndex] = newMsg;
-    }
-
-    // Generate topic if this is the first exchange (2 messages: user + AI).
-    // 不阻塞主回复：标题在后台生成，调用方可在回复送达后再等它（流式场景下避免多等一轮 LLM）。
-    let topic = session.topic;
+    // 首轮（user + assistant 共 2 条）后台生成标题，不阻塞回复
     let topicPromise = null;
     if (session.messages.length === 2 && !session.topic) {
         topicPromise = generateTopicTitle(session.messages)
-            .then(t => {
-                session.topic = t;
-                saveSession(sessionId, session);
-                return t;
-            })
-            .catch(err => {
-                console.error("Failed to generate topic:", err);
-                return "New Chat";
-            });
+            .then(t => { session.topic = t; saveSession(sessionId, session); return t; })
+            .catch(err => { console.error('Failed to generate topic:', err); return 'New Chat'; });
     }
 
-    // Save session to disk after each message
     saveSession(sessionId, session);
 
     return {
-        response: aiResponse.content.toString(),
-        actions: actions || undefined,
-        topic: topic,
+        finish: 'stop',
+        response: finalText,
+        topic: session.topic,
         topicPromise,
         messageCount: session.messages.length,
     };
+}
+
+/**
+ * 开启一个 turn：追加用户消息并调用模型。
+ * @returns {Promise<object>} finish='stop' 含 response/topic；finish='tool_calls' 含 tool_calls
+ */
+export async function sendMessage(sessionId, content, media, onDelta) {
+    const session = getSession(sessionId);
+    console.log(`[Agent] turn start: session=${sessionId} history=${session.messages.length}`);
+
+    // 历史（干净视图）转 OpenAI 消息
+    const history = session.messages.map(m => ({ role: m.role, content: m.content }));
+    // 本轮用户消息（多模态用于模型）
+    const userContent = buildUserContent(content, media);
+    const working = [...history, { role: 'user', content: userContent }];
+
+    // 持久化用户消息（干净视图：原始文字 + 媒体落盘路径）
+    const persistedMedia = (media && Array.isArray(media))
+        ? media.map((m, i) => ({ ...m, url: persistMediaToLibrary(m, i), base64: undefined })).filter(m => !!m.url)
+        : undefined;
+    session.messages.push({
+        role: 'user',
+        content: content || (persistedMedia?.length ? '[媒体]' : ''),
+        media: persistedMedia,
+        timestamp: new Date().toISOString(),
+    });
+
+    const result = await runModel(working, onDelta);
+    working.push(assistantMessageFromResult(result));
+    return finalizeOrPause(session, sessionId, working, result, result.content || '');
+}
+
+/**
+ * 续上一个 turn：把前端执行工具的结果喂回模型。
+ * @param {Array} toolResults [{ tool_call_id, content }]，content 为字符串或可序列化对象
+ * @returns {Promise<object>} 同 sendMessage
+ */
+export async function submitToolResults(sessionId, toolResults, onDelta) {
+    const session = getSession(sessionId);
+    const pending = session.pending;
+    if (!pending || !Array.isArray(pending.working)) {
+        throw new Error('没有进行中的工具调用（pending 为空，可能已超时或会话已重置）');
+    }
+
+    const working = pending.working;
+    // 从最近一条 assistant 的 tool_calls 里查出每个 tool_call_id 对应的工具名（便于扁平化时标注）
+    const idToName = {};
+    for (let i = working.length - 1; i >= 0; i--) {
+        const m = working[i];
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+            for (const tc of m.tool_calls) idToName[tc.id] = tc.function?.name;
+            break;
+        }
+    }
+    for (const r of (toolResults || [])) {
+        working.push({
+            role: 'tool',
+            tool_call_id: r.tool_call_id,
+            name: idToName[r.tool_call_id],
+            content: typeof r.content === 'string' ? r.content : JSON.stringify(r.content ?? {}),
+        });
+    }
+
+    const result = await runModel(working, onDelta);
+    working.push(assistantMessageFromResult(result));
+    const accumulated = `${pending.assistantText || ''}${pending.assistantText && result.content ? '\n\n' : ''}${result.content || ''}`;
+    return finalizeOrPause(session, sessionId, working, result, accumulated);
 }
 
 // ============================================================================
@@ -532,5 +461,7 @@ export default {
     listSessions,
     getSessionData,
     sendMessage,
+    submitToolResults,
     generateTopicTitle,
+    MAX_AGENT_STEPS,
 };

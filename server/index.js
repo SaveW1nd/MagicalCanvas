@@ -1312,53 +1312,80 @@ app.post('/api/trim-video', async (req, res) => {
 // are needed (multi-agent, advanced tools), consider migrating to Python.
 // ============================================================================
 
-// Send a message to the chat agent
-// 聊天（SSE 流式）：模型生成的文字逐段推送，避免长回复时前端一直转圈。
-// 事件：{type:'delta', text} 增量 → {type:'done', response, topic, messageCount} → 可选 {type:'topic', topic}
-app.post('/api/chat', async (req, res) => {
-    const { sessionId, message, media, canvasContext } = req.body;
+// 设置 SSE 响应头并返回一个 send 函数
+function startSSE(res) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    return (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* 客户端可能已断开 */ } };
+}
 
-    const API_KEY = getKey('TEXT_API_KEY');
-    if (!API_KEY) {
+// 把 agent turn 的结果发成 SSE 事件：
+// - finish='tool_calls' → {type:'tool_calls', tool_calls, content}（前端执行后调 /api/chat/tools 续上）
+// - finish='stop'       → {type:'done', response, topic, messageCount} → 可选 {type:'topic', topic}
+async function emitAgentResult(send, result) {
+    if (result.finish === 'tool_calls') {
+        send({ type: 'tool_calls', tool_calls: result.tool_calls, content: result.content, messageCount: result.messageCount });
+        return;
+    }
+    send({ type: 'done', response: result.response, topic: result.topic, messageCount: result.messageCount });
+    if (result.topicPromise) {
+        const topic = await result.topicPromise;
+        send({ type: 'topic', topic });
+    }
+}
+
+// 聊天（SSE 流式，function-calling agent）：开启一个 turn。
+// 事件：{type:'delta', text} 文字增量 → {type:'tool_calls', tool_calls} 或 {type:'done', response, topic}
+app.post('/api/chat', async (req, res) => {
+    const { sessionId, message, media } = req.body;
+
+    if (!getKey('TEXT_API_KEY')) {
         return res.status(500).json({ error: "未配置文字模型 KEY，请在「设置」中填写后再使用聊天" });
     }
     if (!sessionId) {
         return res.status(400).json({ error: "sessionId is required" });
     }
-    if (!message && !media) {
+    if (!message && !(media && media.length)) {
         return res.status(400).json({ error: "message or media is required" });
     }
 
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
-    const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* 客户端可能已断开 */ } };
-
+    const send = startSSE(res);
     try {
-        let sentLen = 0;
-        const result = await chatAgent.sendMessage(sessionId, message, media, API_KEY, (delta, total) => {
-            // gpt2apiChat 的 onDelta 给的是增量片段；直接推增量
-            if (delta) { sentLen = total; send({ type: 'delta', text: delta }); }
-        }, canvasContext);
-
-        send({
-            type: 'done',
-            response: result.response,
-            actions: result.actions,
-            topic: result.topic,
-            messageCount: result.messageCount,
+        const result = await chatAgent.sendMessage(sessionId, message, media, (delta) => {
+            if (delta) send({ type: 'delta', text: delta });
         });
-
-        // 首轮对话的标题在后台生成，生成完再补发一个事件（不阻塞回复展示）
-        if (result.topicPromise) {
-            const topic = await result.topicPromise;
-            send({ type: 'topic', topic });
-        }
+        await emitAgentResult(send, result);
         res.end();
     } catch (error) {
         console.error("Chat API Error:", error);
         send({ type: 'error', error: error.message || "Chat failed" });
+        res.end();
+    }
+});
+
+// 续上一个 turn：前端把工具执行结果回传，模型据此继续（再调工具或给出最终回复）。
+// body: { sessionId, toolResults: [{ tool_call_id, content }] }
+app.post('/api/chat/tools', async (req, res) => {
+    const { sessionId, toolResults } = req.body;
+    if (!sessionId) {
+        return res.status(400).json({ error: "sessionId is required" });
+    }
+    if (!Array.isArray(toolResults)) {
+        return res.status(400).json({ error: "toolResults (array) is required" });
+    }
+
+    const send = startSSE(res);
+    try {
+        const result = await chatAgent.submitToolResults(sessionId, toolResults, (delta) => {
+            if (delta) send({ type: 'delta', text: delta });
+        });
+        await emitAgentResult(send, result);
+        res.end();
+    } catch (error) {
+        console.error("Chat tools API Error:", error);
+        send({ type: 'error', error: error.message || "Tool round failed" });
         res.end();
     }
 });

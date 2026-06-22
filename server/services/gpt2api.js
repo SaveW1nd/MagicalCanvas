@@ -235,17 +235,38 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
     throw lastErr || new Error('视频下载失败');
 }
 
+/** 归一化非流式 message.tool_calls 为标准结构 */
+function normalizeToolCalls(tcs) {
+    if (!Array.isArray(tcs)) return [];
+    return tcs.map((tc, i) => ({
+        id: tc.id || `call_${i}_${Math.random().toString(36).slice(2)}`,
+        type: 'function',
+        function: {
+            name: tc.function?.name || '',
+            arguments: typeof tc.function?.arguments === 'string'
+                ? tc.function.arguments
+                : JSON.stringify(tc.function?.arguments ?? {}),
+        },
+    }));
+}
+
 /**
- * 文本对话（OpenAI 兼容）。返回模型回复字符串。
- * 使用 SSE 流式接收再拼装：慢速推理模型（如 gpt-5 系列）非流式请求
- * 容易被中转网关 1~2 分钟超时掐断，流式则不受影响。
+ * 内部：发起一次 chat completion（OpenAI 兼容），返回 { content, toolCalls, finishReason }。
+ * 同时支持 function calling 与流式/非流式：
+ * - 使用 SSE 流式接收再拼装，避免慢速推理模型被中转网关 1~2 分钟超时掐断；
+ * - 流式 tool_calls 按 index 累积分片的 function.name / function.arguments；
+ * - 部分网关忽略 stream 直接返回 JSON，也做兼容。
  */
-export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, onDelta }) {
+async function requestChatCompletion({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, tools, toolChoice, onDelta }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
     const body = { model, messages, temperature, stream: true };
     if (maxTokens) body.max_tokens = maxTokens;
+    if (tools && tools.length) {
+        body.tools = tools;
+        body.tool_choice = toolChoice || 'auto';
+    }
 
     const res = await fetch(`${base}/chat/completions`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
 
@@ -259,11 +280,17 @@ export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperatur
     if (contentType.includes('application/json')) {
         const data = await res.json().catch(() => ({}));
         if (data?.error) throw new Error(data.error.message || data.error);
-        return data?.choices?.[0]?.message?.content || '';
+        const choice = data?.choices?.[0] || {};
+        const content = choice.message?.content || '';
+        if (content) { try { onDelta?.(content, content.length); } catch { /* 忽略 */ } }
+        const toolCalls = normalizeToolCalls(choice.message?.tool_calls);
+        return { content, toolCalls, finishReason: choice.finish_reason || (toolCalls.length ? 'tool_calls' : 'stop') };
     }
 
-    // 解析 SSE 流，拼接 delta.content
-    let full = '';
+    // 解析 SSE 流：拼接 delta.content，并按 index 累积 delta.tool_calls
+    let content = '';
+    let finishReason = null;
+    const toolAcc = new Map(); // index -> { id, name, args }
     let buffer = '';
     const decoder = new TextDecoder();
     for await (const chunk of res.body) {
@@ -275,19 +302,51 @@ export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperatur
             if (!trimmed.startsWith('data:')) continue;
             const payload = trimmed.slice(5).trim();
             if (payload === '[DONE]') continue;
+            let json;
             try {
-                const json = JSON.parse(payload);
-                if (json?.error) throw new Error(json.error.message || json.error);
-                const delta = json?.choices?.[0]?.delta?.content;
-                if (delta) {
-                    full += delta;
-                    try { onDelta?.(delta, full.length); } catch { /* 进度回调失败不影响主流程 */ }
-                }
+                json = JSON.parse(payload);
             } catch (e) {
                 if (e instanceof SyntaxError) continue; // 跳过非 JSON 行
                 throw e;
             }
+            if (json?.error) throw new Error(json.error.message || json.error);
+            const choice = json?.choices?.[0];
+            if (!choice) continue;
+            const delta = choice.delta || {};
+            if (delta.content) {
+                content += delta.content;
+                try { onDelta?.(delta.content, content.length); } catch { /* 进度回调失败不影响主流程 */ }
+            }
+            if (Array.isArray(delta.tool_calls)) {
+                for (const tc of delta.tool_calls) {
+                    const idx = tc.index ?? 0;
+                    const cur = toolAcc.get(idx) || { id: '', name: '', args: '' };
+                    if (tc.id) cur.id = tc.id;
+                    if (tc.function?.name) cur.name = tc.function.name;
+                    if (tc.function?.arguments) cur.args += tc.function.arguments;
+                    toolAcc.set(idx, cur);
+                }
+            }
+            if (choice.finish_reason) finishReason = choice.finish_reason;
         }
     }
-    return full;
+
+    const toolCalls = [...toolAcc.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, v]) => ({
+            id: v.id || `call_${Math.random().toString(36).slice(2)}`,
+            type: 'function',
+            function: { name: v.name, arguments: v.args || '{}' },
+        }));
+
+    return { content, toolCalls, finishReason: finishReason || (toolCalls.length ? 'tool_calls' : 'stop') };
 }
+
+/**
+ * 文本对话（OpenAI 兼容）。返回模型回复字符串（向后兼容，供剧本/分镜/标题等纯文本调用方使用）。
+ */
+export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, onDelta }) {
+    const { content } = await requestChatCompletion({ messages, model, baseUrl, apiKey, temperature, maxTokens, onDelta });
+    return content;
+}
+
