@@ -14,6 +14,7 @@ import { generateHailuoVideo } from '../services/hailuo.js';
 import { generateOpenAIImage } from '../services/openai.js';
 import { resolveImageToBase64, saveBufferToFile } from '../utils/imageHelpers.js';
 import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
+import { generateFlow2apiImage, generateFlow2apiVideo, isFlow2apiImageModel, isFlow2apiVideoModel } from '../services/flow2api.js';
 
 const router = express.Router();
 
@@ -40,7 +41,23 @@ router.post('/generate-image', async (req, res) => {
         let imageBuffer;
         let imageFormat = 'png';
 
-        if (isGpt2api) {
+        if (isFlow2apiImageModel(IMAGE_MODEL)) {
+            // --- Google Flow（flow2api）出图：异步任务 + 轮询 ---
+            if (!IMAGE_API_KEY) {
+                return res.status(500).json({ error: "未配置图片模型 KEY，请在「设置」中填写" });
+            }
+            console.log(`Using flow2api image model: ${IMAGE_MODEL} @ ${IMAGE_API_URL}`);
+            const result = await generateFlow2apiImage({
+                prompt,
+                aspectRatio,
+                model: IMAGE_MODEL,
+                baseUrl: IMAGE_API_URL,
+                apiKey: IMAGE_API_KEY,
+            });
+            imageBuffer = result.buffer;
+            imageFormat = result.format;
+
+        } else if (isGpt2api) {
             // --- 统一图片生成（设置：网址 / KEY / 模型名）---
             if (!IMAGE_API_KEY) {
                 return res.status(500).json({ error: "未配置图片模型 KEY，请在「设置」中填写" });
@@ -239,7 +256,27 @@ router.post('/generate-video', async (req, res) => {
 
         let videoBuffer;
 
-        if (isGpt2api) {
+        // flow2api 视频模型：节点选择优先，其次设置里的 VIDEO_MODEL
+        const flowVideoModel = (videoModel && isFlow2apiVideoModel(videoModel))
+            ? videoModel
+            : (isFlow2apiVideoModel(VIDEO_MODEL) ? VIDEO_MODEL : null);
+
+        if (flowVideoModel) {
+            // --- Google Flow（flow2api）出视频：异步任务 + 轮询 ---
+            if (!VIDEO_API_KEY) {
+                return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
+            }
+            console.log(`Using flow2api video model: ${flowVideoModel} @ ${VIDEO_API_URL}, duration: ${duration || 5}s`);
+            videoBuffer = await generateFlow2apiVideo({
+                prompt,
+                aspectRatio,
+                duration: duration || 5,
+                model: flowVideoModel,
+                baseUrl: VIDEO_API_URL,
+                apiKey: VIDEO_API_KEY,
+            });
+
+        } else if (isGpt2api) {
             // --- 统一视频生成（设置：网址 / KEY / 模型名）---
             if (!VIDEO_API_KEY) {
                 return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
