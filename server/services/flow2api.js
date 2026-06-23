@@ -29,26 +29,42 @@ function toFlowSize(aspectRatio, fallback) {
     return ['16:9', '9:16', '1:1'].includes(a) ? a : fallback;
 }
 
-/** 轮询一个 flow2api 异步任务直到完成，返回 outputs[0]（含 url） */
-async function pollFlowTask(base, publicId, apiKey, { timeoutMs = 600000, interval = 3000 } = {}) {
+/** 轮询异步任务直到完成，返回 {url}。同时支持：
+ *  - flow2api 原生：GET {base}/tasks/{id} → {status, outputs:[{url}]}
+ *  - KleinAI 上游聚合：GET {base}/images|video/generations/{task_id} → {status, result:{data:[{url}]}} */
+async function pollFlowTask(base, publicId, apiKey, { timeoutMs = 600000, interval = 3000, kind = 'image' } = {}) {
     const start = Date.now();
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 6;
+
+    // 候选轮询路径（按顺序尝试，404 自动 fallback）
+    const pollPaths = [
+        `/tasks/${publicId}`,                           // flow2api 原生
+        `/${kind === 'video' ? 'video' : 'images'}/generations/${publicId}`, // KleinAI 聚合
+    ];
 
     while (true) {
         if (Date.now() - start > timeoutMs) throw new Error('flow2api 任务超时');
 
         let res, data;
-        try {
-            res = await fetch(`${base}/tasks/${publicId}`, { headers: authHeaders(apiKey) });
-            data = await res.json().catch(() => ({}));
-        } catch (e) {
-            if (++consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) throw new Error(`flow2api 轮询连续失败：${e.message || e}`);
-            await sleep(4000);
-            continue;
+        let lastStatus = 0;
+        for (const p of pollPaths) {
+            try {
+                res = await fetch(`${base}${p}`, { headers: authHeaders(apiKey) });
+                lastStatus = res.status;
+                if (res.status === 404) continue; // 试下一个路径
+                data = await res.json().catch(() => ({}));
+                break;
+            } catch (e) {
+                if (++consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) throw new Error(`flow2api 轮询连续失败：${e.message || e}`);
+                await sleep(4000);
+                res = null;
+                break;
+            }
         }
+        if (!res) continue;
         if (!res.ok) {
-            if (++consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) throw new Error(data?.detail || data?.error || `flow2api 轮询失败 (HTTP ${res.status})`);
+            if (++consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) throw new Error(data?.detail || data?.error || `flow2api 轮询失败 (HTTP ${lastStatus})`);
             await sleep(4000);
             continue;
         }
@@ -56,23 +72,25 @@ async function pollFlowTask(base, publicId, apiKey, { timeoutMs = 600000, interv
 
         const status = data.status;
         if (status === 'succeeded') {
-            const out = (data.outputs || [])[0];
+            // 两种响应格式都试一遍
+            const out = (data.outputs || [])[0] || (data.result?.data || [])[0];
             if (!out || !out.url) throw new Error('flow2api 任务成功但缺少输出 url');
             return out;
         }
         if (status === 'failed') {
-            throw new Error(data.error || 'flow2api 任务失败');
+            throw new Error(data.error || data?.result?.error || 'flow2api 任务失败');
         }
         // queued / running：继续轮询
         await sleep(interval);
     }
 }
 
-async function downloadToBuffer(url, { retries = 3 } = {}) {
+async function downloadToBuffer(url, apiKey, { retries = 3 } = {}) {
     let lastErr;
     for (let i = 0; i <= retries; i++) {
         try {
-            const resp = await fetch(url);
+            const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : undefined;
+            const resp = await fetch(url, headers ? { headers } : undefined);
             if (!resp.ok) throw new Error(`下载生成结果失败 (HTTP ${resp.status})`);
             return Buffer.from(await resp.arrayBuffer());
         } catch (e) {
@@ -101,13 +119,34 @@ export async function generateFlow2apiImage({ prompt, aspectRatio, model, baseUr
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.detail || data?.error || `flow2api 图像请求失败 (HTTP ${res.status})`);
 
-    const publicId = data.id;
-    if (!publicId) throw new Error('flow2api 图像接口未返回任务 id');
+    // 同步模式（KleinAI 上游聚合）：直接返回 data:[{url}]，url 可能是相对路径
+    const sync = data?.data?.[0];
+    if (sync && sync.url) {
+        const absURL = absolutizeURL(base, sync.url);
+        const buffer = await downloadToBuffer(absURL, apiKey);
+        const format = /\.jpe?g($|\?)/i.test(absURL) ? 'jpg' : 'png';
+        return { buffer, format };
+    }
 
-    const out = await pollFlowTask(base, publicId, apiKey, { timeoutMs: 300000 });
-    const buffer = await downloadToBuffer(out.url);
+    // 异步模式：flow2api 用 id，KleinAI 用 task_id
+    const publicId = data.task_id || data.id;
+    if (!publicId) throw new Error('flow2api 图像接口未返回任务 id');
+    const out = await pollFlowTask(base, publicId, apiKey, { timeoutMs: 300000, kind: 'image' });
+    const buffer = await downloadToBuffer(absolutizeURL(base, out.url), apiKey);
     const format = /\.jpe?g($|\?)/i.test(out.url) ? 'jpg' : 'png';
     return { buffer, format };
+}
+
+/** 相对路径自动补全为 baseUrl 同源绝对路径 */
+function absolutizeURL(base, u) {
+    if (!u) return u;
+    if (/^https?:\/\//i.test(u)) return u;
+    try {
+        const origin = new URL(base).origin;
+        return origin + (u.startsWith('/') ? u : '/' + u);
+    } catch {
+        return u;
+    }
 }
 
 /**
@@ -124,13 +163,23 @@ export async function generateFlow2apiVideo({ prompt, aspectRatio, duration, mod
         size: toFlowSize(aspectRatio, '16:9'),
     };
 
-    const res = await fetch(`${base}/videos/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
+    // KleinAI 上游聚合可能用 /video/ 或 /videos/，先打 /videos/，失败用 /video/
+    let res = await fetch(`${base}/videos/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
+    if (res.status === 404) {
+        res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.detail || data?.error || `flow2api 视频请求失败 (HTTP ${res.status})`);
 
-    const publicId = data.id;
-    if (!publicId) throw new Error('flow2api 视频接口未返回任务 id');
+    // 同步模式（KleinAI 上游聚合）
+    const sync = data?.data?.[0];
+    if (sync && sync.url) {
+        return await downloadToBuffer(absolutizeURL(base, sync.url), apiKey);
+    }
 
-    const out = await pollFlowTask(base, publicId, apiKey, { timeoutMs: 900000 });
-    return await downloadToBuffer(out.url);
+    // 异步模式：flow2api 用 id，KleinAI 用 task_id
+    const publicId = data.task_id || data.id;
+    if (!publicId) throw new Error('flow2api 视频接口未返回任务 id');
+    const out = await pollFlowTask(base, publicId, apiKey, { timeoutMs: 900000, kind: 'video' });
+    return await downloadToBuffer(absolutizeURL(base, out.url), apiKey);
 }
