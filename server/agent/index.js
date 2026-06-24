@@ -10,18 +10,20 @@
  *  - 一个 turn 内的工具消息栈临时存在 session.pending 里；历史只持久化「干净视图」
  *    （用户消息 + 最终 assistant 文本），供侧边栏会话列表使用。
  *
- * 工具调用走 OpenAI 原生 function calling：tools 字段直接传给上游
- * KleinAI（grok provider 内部把 tools 翻译成 grok web 能懂的 system 指令再解回 tool_calls）。
- * 文本模型默认 grok-4.20-fast。
+ * 工具调用在画布侧自行模拟（toolProtocol.js 注入+解析），后端只需纯聊天 grok 网关。文本模型默认 grok-4.20-fast。
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getKey } from "../config.js";
-import { gpt2apiChat, requestChatCompletion } from "../services/gpt2api.js";
+import { gpt2apiChat } from "../services/gpt2api.js";
 import { AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
 import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
+import { buildToolSystemPrompt, parseToolCalls, flattenForPlainChat } from "./toolProtocol.js";
+
+// 工具系统指令块（只构建一次）
+const TOOL_SYSTEM_PROMPT = buildToolSystemPrompt(TOOL_SCHEMAS);
 
 /** 一个 turn 内最多自主调用工具的轮数（防失控成本），由路由侧据此兜底。 */
 export const MAX_AGENT_STEPS = 10;
@@ -279,30 +281,38 @@ export function getSessionData(sessionId) {
 // ============================================================================
 
 /**
- * 调用一次模型：用 OpenAI 原生 function calling（KleinAI grok provider 已支持 tools 翻译）。
- * working 可能含 assistant.tool_calls / role:"tool" 消息，全部原样转发。
+ * 调用一次模型：在画布侧自行实现 function calling。
+ * 注入工具协议到 system + 扁平化历史 → 调**纯聊天**后端（任意 grok 网关均可）→
+ * 流式时剥离 <tool_calls> XML（不给用户看裸 XML）→ 解析工具调用。
  * 返回 { content, tool_calls, finish_reason }（与原契约一致）。
  */
 async function runModel(working, onDelta) {
     const { apiKey, baseUrl, model } = getTextConfig();
     if (!apiKey) throw new Error('未配置文字模型 KEY，请在「设置」中填写后再使用聊天');
 
-    const messages = [{ role: 'system', content: AGENT_SYSTEM_PROMPT }, ...working];
-    const { content, toolCalls, finishReason } = await requestChatCompletion({
-        messages,
-        model,
-        baseUrl,
-        apiKey,
-        tools: TOOL_SCHEMAS,
-        toolChoice: 'auto',
-        onDelta,
-    });
-    // 过滤未注册的 tool 名（防模型胡编）
-    const filtered = (toolCalls || []).filter(tc => !TOOL_NAMES || TOOL_NAMES.includes(tc.function?.name));
+    const system = `${AGENT_SYSTEM_PROMPT}\n\n${TOOL_SYSTEM_PROMPT}`;
+    const messages = [{ role: 'system', content: system }, ...flattenForPlainChat(working)];
+
+    // 流式剥离：只把第一个工具块之前的正文推给前端；尾部疑似半个标签先按住（最终 done 会补全）
+    let acc = '', emitted = 0;
+    const wrappedDelta = (delta) => {
+        if (!delta) return;
+        acc += delta;
+        const idx = acc.search(/<tool_call|<function_call|<invoke\s/i);
+        let cleanLen = idx === -1 ? acc.length : idx;
+        if (idx === -1) {
+            const lt = acc.lastIndexOf('<');
+            if (lt >= emitted && /^<[a-z_]*$/i.test(acc.slice(lt))) cleanLen = lt; // 按住未完成的 <tag
+        }
+        if (cleanLen > emitted) { try { onDelta?.(acc.slice(emitted, cleanLen)); } catch { /* 忽略 */ } emitted = cleanLen; }
+    };
+
+    const fullText = await gpt2apiChat({ messages, model, baseUrl, apiKey, onDelta: wrappedDelta });
+    const { toolCalls, cleanText } = parseToolCalls(fullText, TOOL_NAMES);
     return {
-        content: content || '',
-        tool_calls: filtered,
-        finish_reason: filtered.length ? 'tool_calls' : (finishReason || 'stop'),
+        content: cleanText,
+        tool_calls: toolCalls,
+        finish_reason: toolCalls.length ? 'tool_calls' : 'stop',
     };
 }
 
