@@ -49,3 +49,11 @@ models/
 # Agent workflows and shared utilities
 .agent/
 .shared/
+
+# macOS resource forks (e.g. when accessing via SMB/NTFS)
+._*
+.DS_Store
+
+# editor / hand backup files
+*.bak
+*.bak[0-9]
