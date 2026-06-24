@@ -23,6 +23,18 @@ function authHeaders(apiKey) {
     return { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
 }
 
+/** 从上游响应里抠出人类可读错误。兼容 string、{message}、{error:{message}}、{detail}，避免 "[object Object]"。 */
+function extractErrMsg(data) {
+    if (!data) return '';
+    if (typeof data === 'string') return data;
+    if (typeof data.detail === 'string') return data.detail;
+    if (typeof data.message === 'string') return data.message;
+    const e = data.error;
+    if (typeof e === 'string') return e;
+    if (e && typeof e === 'object') return e.message || e.detail || JSON.stringify(e);
+    return '';
+}
+
 /** 宽高比 → flow2api size（接受 16:9 / 9:16 / 1:1；其余回退默认） */
 function toFlowSize(aspectRatio, fallback) {
     const a = String(aspectRatio || '').trim();
@@ -78,7 +90,7 @@ async function pollFlowTask(base, publicId, apiKey, { timeoutMs = 600000, interv
             return out;
         }
         if (status === 'failed') {
-            throw new Error(data.error || data?.result?.error || 'flow2api 任务失败');
+            throw new Error(extractErrMsg(data) || extractErrMsg(data?.result) || 'flow2api 任务失败');
         }
         // queued / running：继续轮询
         await sleep(interval);
@@ -117,7 +129,7 @@ export async function generateFlow2apiImage({ prompt, aspectRatio, model, baseUr
 
     const res = await fetch(`${base}/images/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.detail || data?.error || `flow2api 图像请求失败 (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(extractErrMsg(data) || `flow2api 图像请求失败 (HTTP ${res.status})`);
 
     // 同步模式（KleinAI 上游聚合）：直接返回 data:[{url}]，url 可能是相对路径
     const sync = data?.data?.[0];
@@ -169,7 +181,7 @@ export async function generateFlow2apiVideo({ prompt, aspectRatio, duration, mod
         res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.detail || data?.error || `flow2api 视频请求失败 (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(extractErrMsg(data) || `flow2api 视频请求失败 (HTTP ${res.status})`);
 
     // 同步模式（KleinAI 上游聚合）
     const sync = data?.data?.[0];

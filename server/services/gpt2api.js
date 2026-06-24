@@ -257,7 +257,7 @@ function normalizeToolCalls(tcs) {
  * - 流式 tool_calls 按 index 累积分片的 function.name / function.arguments；
  * - 部分网关忽略 stream 直接返回 JSON，也做兼容。
  */
-async function requestChatCompletion({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, tools, toolChoice, onDelta }) {
+export async function requestChatCompletion({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, tools, toolChoice, onDelta }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
