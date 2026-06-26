@@ -18,6 +18,14 @@
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', 'Auto'];
 const NODE_TYPES = ['text', 'image', 'video'];
 
+/** 可选图片模型（与前端 NodeControls.IMAGE_MODELS 对齐）
+ *  均走 fp（fpbrowser2api → Google Flow）的 Nano Banana 系列。 */
+const IMAGE_MODELS = ['nana-banana-pro', 'nana-banana-2'];
+
+/** 可选视频模型（与前端 NodeControls.VIDEO_MODELS 对齐）
+ *  均走 fp（fpbrowser2api → Google Flow）。Veo 三档当前仅 8s 可用。 */
+const VIDEO_MODELS = ['veo-omni-flash', 'veo-3-1-lite', 'veo-3-1-fast', 'veo-3-1-quality'];
+
 export const TOOL_SCHEMAS = [
     {
         type: 'function',
@@ -39,6 +47,8 @@ export const TOOL_SCHEMAS = [
                     title: { type: 'string', description: '节点标题（可选，简短）' },
                     prompt: { type: 'string', description: '提示词/文本内容，中文撰写' },
                     aspectRatio: { type: 'string', enum: ASPECT_RATIOS, description: '画幅（image/video 用，可选，默认 Auto）' },
+                    imageModel: { type: 'string', enum: IMAGE_MODELS, description: 'image 节点用的图片模型（可选；不传走「设置」里的默认模型）。nana-banana-pro 细节更强，nana-banana-2 更快。' },
+                    videoModel: { type: 'string', enum: VIDEO_MODELS, description: 'video 节点用的视频模型（可选；不传走默认）。veo-omni-flash 短而快（4/6/8/10s），veo-3-1-quality 质量最佳但慢、veo-3-1-fast/lite 更快（Veo 三档当前仅 8s）。' },
                     parents: {
                         type: 'array',
                         items: { type: 'string' },
@@ -54,7 +64,7 @@ export const TOOL_SCHEMAS = [
         type: 'function',
         function: {
             name: 'update_node',
-            description: '修改一个已存在节点的提示词/标题/画幅。id 必须是画布上的真实节点 id（可先 get_canvas 获取）。',
+            description: '修改一个已存在节点的提示词/标题/画幅/模型。id 必须是画布上的真实节点 id（可先 get_canvas 获取）。',
             parameters: {
                 type: 'object',
                 properties: {
@@ -62,6 +72,8 @@ export const TOOL_SCHEMAS = [
                     prompt: { type: 'string', description: '新的提示词（可选）' },
                     title: { type: 'string', description: '新的标题（可选）' },
                     aspectRatio: { type: 'string', enum: ASPECT_RATIOS, description: '新的画幅（可选）' },
+                    imageModel: { type: 'string', enum: IMAGE_MODELS, description: '新的图片模型（仅 image 节点，可选）' },
+                    videoModel: { type: 'string', enum: VIDEO_MODELS, description: '新的视频模型（仅 video 节点，可选）' },
                 },
                 required: ['id'],
                 additionalProperties: false,
