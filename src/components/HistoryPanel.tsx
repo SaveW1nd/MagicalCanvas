@@ -9,7 +9,8 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, Trash2, Maximize2, Image as ImageIcon, Video } from 'lucide-react';
+import { Loader2, Trash2, Maximize2, Minimize2, Image as ImageIcon, Video, Plus, FolderPlus, Eye } from 'lucide-react';
+import { ExpandedMediaModal } from './modals/ExpandedMediaModal';
 
 // ============================================================================
 // CONSTANTS
@@ -35,6 +36,8 @@ interface HistoryPanelProps {
     isOpen: boolean;
     onClose: () => void;
     onSelectAsset: (type: 'images' | 'videos', url: string, prompt: string, model?: string) => void;
+    /** 上传到素材库；返回是否成功（用于显示状态/提示） */
+    onSaveToLibrary?: (type: 'images' | 'videos', url: string, prompt: string, name?: string) => Promise<boolean>;
     panelY?: number;
     canvasTheme?: 'dark' | 'light';
 }
@@ -47,6 +50,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     isOpen,
     onClose,
     onSelectAsset,
+    onSaveToLibrary,
     panelY = 200,
     canvasTheme = 'dark'
 }) => {
@@ -61,6 +65,66 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     const [imageTotalCount, setImageTotalCount] = useState<number>(0);
     const [videoTotalCount, setVideoTotalCount] = useState<number>(0);
     const [cleanConfirm, setCleanConfirm] = useState<'old' | 'all' | null>(null); // 批量清理确认
+    const [isExpanded, setIsExpanded] = useState(false); // 放大：占据更大区域以看全历史
+
+    // —— 可拖拽 + 可缩放的浮动窗口（像 PPT 里操作矩形）——
+    const ZOOM_BAR_RESERVE = 96; // 底部缩放条留白，避免被遮挡
+    const MIN_W = 380, MIN_H = 260, EDGE = 8;
+    const [rect, setRect] = useState(() => {
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        const w = 700, h = 480;
+        const x = 80;
+        const y = Math.max(64, Math.min(panelY, vh - ZOOM_BAR_RESERVE - h));
+        return { x, y, w: Math.min(w, vw - x - EDGE), h };
+    });
+    const preExpandRef = useRef<typeof rect | null>(null);
+
+    /** 拖动表头移动整窗（点到按钮上则不触发，让按钮正常工作） */
+    const startDrag = (e: React.PointerEvent) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        e.preventDefault();
+        const sx = e.clientX, sy = e.clientY, orig = { ...rect };
+        const onMove = (ev: PointerEvent) => {
+            const vw = window.innerWidth, vh = window.innerHeight;
+            const maxX = Math.max(EDGE, vw - orig.w - EDGE);
+            const maxY = Math.max(56, vh - ZOOM_BAR_RESERVE - orig.h);
+            const nx = Math.max(EDGE, Math.min(orig.x + (ev.clientX - sx), maxX));
+            const ny = Math.max(56, Math.min(orig.y + (ev.clientY - sy), maxY));
+            setRect(r => ({ ...r, x: nx, y: ny }));
+        };
+        const onUp = () => { document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); };
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    };
+
+    /** 拖右下角缩放 */
+    const startResize = (e: React.PointerEvent) => {
+        e.preventDefault(); e.stopPropagation();
+        const sx = e.clientX, sy = e.clientY, orig = { ...rect };
+        const onMove = (ev: PointerEvent) => {
+            const vw = window.innerWidth, vh = window.innerHeight;
+            const nw = Math.max(MIN_W, Math.min(orig.w + (ev.clientX - sx), vw - orig.x - EDGE));
+            const nh = Math.max(MIN_H, Math.min(orig.h + (ev.clientY - sy), vh - ZOOM_BAR_RESERVE - orig.y));
+            setRect(r => ({ ...r, w: nw, h: nh }));
+        };
+        const onUp = () => { document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); };
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    };
+
+    /** 放大/还原：放大 = 占满可用区域（留底部缩放条），还原 = 回到放大前大小 */
+    const toggleExpand = () => {
+        if (isExpanded) {
+            if (preExpandRef.current) setRect(preExpandRef.current);
+            setIsExpanded(false);
+        } else {
+            preExpandRef.current = rect;
+            const vw = window.innerWidth, vh = window.innerHeight;
+            setRect({ x: 72, y: 64, w: Math.min(1200, vw - 144), h: vh - ZOOM_BAR_RESERVE - 64 });
+            setIsExpanded(true);
+        }
+    };
     const [cleaning, setCleaning] = useState(false);
 
     // --- Refs ---
@@ -230,6 +294,20 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         onSelectAsset(activeTab, fullUrl, asset.prompt || '', asset.model);
     };
 
+    // 查看大图/视频
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    // 上传到素材库（带 per-item 进行中状态）
+    const [savingId, setSavingId] = useState<string | null>(null);
+    const handleSaveToLibrary = async (asset: AssetMetadata) => {
+        if (!onSaveToLibrary || savingId) return;
+        setSavingId(asset.id);
+        try {
+            await onSaveToLibrary(activeTab, `${asset.url}`, asset.prompt || '');
+        } finally {
+            setSavingId(null);
+        }
+    };
+
     // Group assets by date
     const groupedAssets = assets.reduce((groups, asset) => {
         const date = new Date(asset.createdAt).toLocaleDateString('en-CA'); // YYYY-MM-DD format
@@ -248,13 +326,16 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
 
     return (
         <>
-            {/* Main Panel */}
+            {/* Main Panel —— 可拖拽 + 可缩放浮动窗口 */}
             <div
-                className={`fixed left-20 w-[700px] backdrop-blur-xl border rounded-2xl shadow-2xl z-40 flex flex-col overflow-hidden max-h-[500px] transition-colors duration-300 ${isDark ? 'bg-[#0a0a0a]/95 border-neutral-800' : 'bg-white/95 border-neutral-200'}`}
-                style={{ top: panelY }}
+                className={`fixed backdrop-blur-xl border rounded-2xl shadow-2xl z-40 flex flex-col overflow-hidden transition-colors duration-300 ${isDark ? 'bg-[#0a0a0a]/95 border-neutral-800' : 'bg-white/95 border-neutral-200'}`}
+                style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
             >
-                {/* Header */}
-                <div className={`flex items-center justify-between px-5 py-4 border-b ${isDark ? 'border-neutral-800' : 'border-neutral-200'}`}>
+                {/* Header（拖动区） */}
+                <div
+                    onPointerDown={startDrag}
+                    className={`flex items-center justify-between px-5 py-4 border-b cursor-move select-none ${isDark ? 'border-neutral-800' : 'border-neutral-200'}`}
+                >
                     <div className="flex items-center gap-6">
                         <button
                             className={`text-sm font-medium transition-colors pb-1 flex items-center gap-2 ${activeTab === 'images'
@@ -295,10 +376,11 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                             清空全部
                         </button>
                         <button
-                            onClick={onClose}
+                            onClick={toggleExpand}
                             className={`ml-1 transition-colors ${isDark ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-neutral-900'}`}
+                            title={isExpanded ? '还原大小' : '放大'}
                         >
-                            <Maximize2 size={18} />
+                            {isExpanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
                         </button>
                     </div>
                 </div>
@@ -333,8 +415,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                                         {groupedAssets[date].map(asset => (
                                             <div
                                                 key={asset.id}
-                                                onClick={() => handleSelectAsset(asset)}
-                                                className={`aspect-square rounded-lg overflow-hidden cursor-pointer transition-all group relative ${isDark ? 'bg-neutral-900' : 'bg-neutral-100'}`}
+                                                className={`aspect-square rounded-lg overflow-hidden transition-all group relative ${isDark ? 'bg-neutral-900' : 'bg-neutral-100'}`}
                                             >
                                                 {activeTab === 'images' ? (
                                                     <img
@@ -356,13 +437,43 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                                                         }}
                                                     />
                                                 )}
-                                                {/* Delete button */}
+                                                {/* Hover 操作层加暗，让底部图标按钮更清晰 */}
+                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                                                {/* 操作按钮（图标 + hover 原生提示，风格与删除一致） */}
+                                                <div className="absolute bottom-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setPreviewUrl(asset.url); }}
+                                                        className="p-1 bg-black/50 hover:bg-black/70 rounded-md transition-all"
+                                                        title="查看"
+                                                    >
+                                                        <Eye size={12} className="text-white" />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleSelectAsset(asset); }}
+                                                        className="p-1 bg-black/50 hover:bg-blue-500 rounded-md transition-all"
+                                                        title="添加到画布"
+                                                    >
+                                                        <Plus size={12} className="text-white" />
+                                                    </button>
+                                                    {onSaveToLibrary && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleSaveToLibrary(asset); }}
+                                                            disabled={savingId === asset.id}
+                                                            className="p-1 bg-black/50 hover:bg-green-600 rounded-md transition-all disabled:opacity-60"
+                                                            title="上传到素材库"
+                                                        >
+                                                            {savingId === asset.id ? <Loader2 size={12} className="animate-spin text-white" /> : <FolderPlus size={12} className="text-white" />}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {/* Delete button（置于操作层之上） */}
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         setDeleteConfirm(asset.id);
                                                     }}
-                                                    className="absolute top-1 right-1 p-1 bg-black/50 hover:bg-red-500 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                                                    className="absolute top-1 right-1 p-1 bg-black/50 hover:bg-red-500 rounded-md opacity-0 group-hover:opacity-100 transition-all z-10"
+                                                    title="删除"
                                                 >
                                                     <Trash2 size={12} className="text-white" />
                                                 </button>
@@ -385,6 +496,17 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* 右下角缩放手柄（拖拽调整大小） */}
+                <div
+                    onPointerDown={startResize}
+                    className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize flex items-end justify-end p-1 group"
+                    title="拖拽调整大小"
+                >
+                    <svg width="9" height="9" viewBox="0 0 10 10" className={isDark ? 'text-neutral-600 group-hover:text-neutral-300' : 'text-neutral-400 group-hover:text-neutral-600'} fill="currentColor">
+                        <path d="M9 1 L9 9 L1 9 Z" />
+                    </svg>
                 </div>
             </div>
 
@@ -446,6 +568,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                     </div>
                 </div>
             )}
+
+            {/* 查看大图/视频（缩放 + 平移） */}
+            <ExpandedMediaModal mediaUrl={previewUrl} onClose={() => setPreviewUrl(null)} />
         </>
     );
 };

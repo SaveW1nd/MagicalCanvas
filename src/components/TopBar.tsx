@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { Plus, Save, Loader2, Settings } from 'lucide-react';
+import { Plus, Save, Loader2, Settings, Pencil } from 'lucide-react';
 import { SettingsModal } from './modals/SettingsModal';
 
 interface TopBarProps {
@@ -122,11 +122,13 @@ export const TopBar: React.FC<TopBarProps> = ({
                         />
                     ) : (
                         <span
-                            className={`font-semibold cursor-pointer transition-colors ${canvasTheme === 'dark' ? 'text-neutral-300 hover:text-white' : 'text-neutral-900 hover:text-neutral-600'}`}
+                            className={`group/title inline-flex items-center gap-1.5 font-semibold cursor-text transition-colors ${canvasTheme === 'dark' ? 'text-neutral-300 hover:text-white' : 'text-neutral-900 hover:text-neutral-600'}`}
+                            onClick={handleTitleDoubleClick}
                             onDoubleClick={handleTitleDoubleClick}
-                            title="双击重命名"
+                            title="点击重命名画布"
                         >
                             {canvasTitle}
+                            <Pencil size={12} className="opacity-0 group-hover/title:opacity-60 transition-opacity shrink-0" />
                         </span>
                     )}
                 </div>

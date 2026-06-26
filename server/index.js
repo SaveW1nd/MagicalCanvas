@@ -4,7 +4,6 @@ dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
-import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -56,10 +55,6 @@ app.use('/library', (req, res, next) => {
     next();
 }, express.static(LIBRARY_DIR));
 
-
-const getClient = () => {
-    return new GoogleGenAI({ apiKey: getKey('GEMINI_API_KEY') });
-};
 
 // ============================================================================
 // KLING AI CONFIGURATION
@@ -127,6 +122,56 @@ app.post('/api/settings', (req, res) => {
         res.json({ success: true, settings: merged });
     } catch (error) {
         res.status(500).json({ error: error.message || 'Failed to save settings' });
+    }
+});
+
+// 测试某一类模型接入是否可用：用解析后的 url+key 调 GET {url}/models 验证连通+鉴权（不消耗额度）。
+// body: { group: 'text'|'image'|'video'|'asr'|'gpt2api' }
+app.post('/api/settings/test', async (req, res) => {
+    try {
+        const group = String((req.body && req.body.group) || 'text').toLowerCase();
+        const prefixMap = { text: 'TEXT', image: 'IMAGE', video: 'VIDEO', asr: 'ASR', gpt2api: 'GPT2API' };
+        const prefix = prefixMap[group];
+        if (!prefix) return res.status(400).json({ success: false, error: `未知分组: ${group}` });
+
+        // gpt2api 分组直接用统一项；其余用各类项（留空已在 getKey 内回退到统一项）。
+        const url = (getKey(`${prefix}_API_URL`) || '').replace(/\/+$/, '');
+        const key = getKey(`${prefix}_API_KEY`);
+        const modelName = getKey(`${prefix}_MODEL`) || '';
+        if (!url) return res.status(400).json({ success: false, error: '未配置接入网址' });
+        if (!key) return res.status(400).json({ success: false, error: '未配置 API Key（可填统一 gpt2api KEY）' });
+
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let r;
+        try {
+            r = await fetch(`${url}/models`, {
+                headers: { Authorization: `Bearer ${key}` },
+                signal: ctrl.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            return res.status(200).json({ success: false, error: `HTTP ${r.status}: ${txt.slice(0, 200)}` });
+        }
+        const data = await r.json().catch(() => ({}));
+        const ids = Array.isArray(data?.data) ? data.data.map((m) => m.id).filter(Boolean) : [];
+        const modelOk = !modelName || ids.length === 0 || ids.includes(modelName);
+        res.json({
+            success: true,
+            url,
+            modelName,
+            modelCount: ids.length,
+            modelFound: modelName ? ids.includes(modelName) : null,
+            message: modelOk
+                ? `连接成功${modelName ? `，模型「${modelName}」${ids.includes(modelName) ? '可用' : '未在列表（也可能仍可调用）'}` : ''}`
+                : `连接成功，但模型「${modelName}」不在可用列表（共 ${ids.length} 个）`,
+        });
+    } catch (error) {
+        const msg = error?.name === 'AbortError' ? '请求超时（15s）' : (error?.message || String(error));
+        res.status(200).json({ success: false, error: msg });
     }
 });
 
@@ -698,8 +743,38 @@ app.put('/api/workflows/:id/cover', async (req, res) => {
 });
 
 // ============================================================================
-// GEMINI IMAGE DESCRIPTION API
+// 看图说话 / 优化提示词（已改走 gpt2api，OpenAI 兼容 /chat/completions）
+// 看图说话用视觉模型（默认 grok-4.20-fast，走统一 gpt2api 接入）；优化提示词用文字模型。
+// 路由名保留 /api/gemini/* 以兼容前端，但底层已不依赖 Google Gemini。
 // ============================================================================
+
+// 视觉模型（看图说话用）：独立配置 VISION_API_URL/KEY/MODEL（留空回退到文字端点）。
+// 默认 MiMo v2.5（多模态，支持视觉 + function calling）。
+
+// 调 gpt2api 兼容的 /chat/completions，返回首条回复文本。
+// thinking：可选，透传给 DeepSeek v4 等思考型模型（如 {type:'disabled'} 关推理，避免推理吃光 token 导致正文为空）。
+async function gpt2apiChatComplete({ url, key, model, messages, maxTokens = 512, thinking }) {
+    const base = String(url || '').replace(/\/+$/, '');
+    if (!base) throw new Error('未配置接入网址');
+    if (!key) throw new Error('未配置 API Key');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    try {
+        const body = { model, messages, max_tokens: maxTokens };
+        if (thinking) body.thinking = thinking;
+        const r = await fetch(`${base}/chat/completions`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: ctrl.signal,
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data?.error?.message || data?.error || `HTTP ${r.status}`);
+        return (data?.choices?.[0]?.message?.content || '').trim();
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 // Describe an image for prompt generation
 app.post('/api/gemini/describe-image', async (req, res) => {
@@ -715,19 +790,14 @@ app.post('/api/gemini/describe-image', async (req, res) => {
             return res.status(400).json({ error: 'Image URL is required' });
         }
 
-        // Handle base64 or file URL
-        let imagePart;
+        // Handle base64 or file URL → 统一成 data URL 供 OpenAI vision 使用
+        let visionDataUrl;
 
         // Check if it's a data URL (base64)
         if (imageUrl.startsWith('data:')) {
             const matches = imageUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
             if (matches && matches.length === 3) {
-                imagePart = {
-                    inlineData: {
-                        data: matches[2],
-                        mimeType: matches[1]
-                    }
-                };
+                visionDataUrl = `data:${matches[1]};base64,${matches[2]}`;
             }
         }
         // Handle local file paths (e.g., /library/images/...)
@@ -770,54 +840,38 @@ app.post('/api/gemini/describe-image', async (req, res) => {
                     const mimeType = fullPath.endsWith('.png') ? 'image/png' :
                         fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg') ? 'image/jpeg' : 'image/webp';
 
-                    imagePart = {
-                        inlineData: {
-                            data: base64Data,
-                            mimeType: mimeType
-                        }
-                    };
+                    visionDataUrl = `data:${mimeType};base64,${base64Data}`;
                 } else {
                     console.log(`[Gemini DescribeV2] File not found at: ${fullPath}`);
                 }
             }
         }
 
-        if (!imagePart) {
-            console.log('[Gemini DescribeV2] Failed to process image part');
+        if (!visionDataUrl) {
+            console.log('[DescribeImage] Failed to process image');
             return res.status(400).json({ error: 'Could not process image URL. Provide base64 data or a valid library path.', debug: { imageUrl } });
         }
 
-        const client = getClient();
-        // Correct SDK usage for @google/genai ^1.32.0
-        const result = await client.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: {
-                parts: [
-                    { text: prompt || "Describe this image in detail for video generation." },
-                    imagePart
-                ]
-            }
+        // 走独立的视觉端点（VISION_API_URL/KEY/MODEL，留空回退到文字端点）。
+        // 文字模型可换成无视觉的 DeepSeek，看图仍走有视觉的 MiMo/GLM-V，互不影响。
+        // 注：MiMo v2.5 是思考型模型，描述任务不需要推理，关掉思考避免推理吃光 token 导致正文为空（更稳更快）。
+        const visionModel = getKey('VISION_MODEL');
+        const text = await gpt2apiChatComplete({
+            url: getKey('VISION_API_URL'),
+            key: getKey('VISION_API_KEY'),
+            model: visionModel,
+            maxTokens: 1024,
+            thinking: /deepseek|mimo/i.test(visionModel) ? { type: 'disabled' } : undefined,
+            messages: [{
+                role: 'user',
+                content: [
+                    { type: 'text', text: prompt || '详细描述这张图片，用于视频生成。' },
+                    { type: 'image_url', image_url: { url: visionDataUrl } },
+                ],
+            }],
         });
 
-        let text = "";
-
-        // Handle @google/genai SDK response structure
-        if (result.candidates && result.candidates.length > 0) {
-            const candidate = result.candidates[0];
-            if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-                text = candidate.content.parts[0].text || "";
-            }
-        }
-        // Fallback for other potential response shapes
-        else if (result.response && typeof result.response.text === 'function') {
-            text = result.response.text();
-        }
-
-        if (!text) {
-            console.warn('[Gemini DescribeV2] Warning: No text content found in response.');
-            console.debug('[Gemini DescribeV2] Response dump:', JSON.stringify(result, null, 2));
-        }
-
+        if (!text) console.warn('[DescribeImage] Warning: empty response.');
         res.json({ description: text });
 
     } catch (error) {
@@ -836,34 +890,25 @@ app.post('/api/gemini/optimize-prompt', async (req, res) => {
             return res.status(400).json({ error: 'Prompt is required' });
         }
 
-        const client = getClient();
         const systemInstruction = "You are an expert video prompt engineer. Your goal is to rewrite the user's prompt to be descriptive, visual, and optimized for AI video generation models like Veo, Kling, and Hailuo. detailed, cinematic, and focused on motion and atmosphere. Keep it under 60 words. Output ONLY the rewritten prompt.";
 
-        const result = await client.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: {
-                parts: [
-                    { text: `${systemInstruction}\n\nUser Prompt: ${prompt}` }
-                ]
-            }
+        // 优化提示词是纯文本改写任务，不需要推理。DeepSeek v4 是思考型，
+        // 默认开推理且推理量不受控、偶尔吃光 token 导致正文为空(500)；对 deepseek 关掉思考最稳最快。
+        const textModel = getKey('TEXT_MODEL') || 'grok-4.20-fast';
+        let text = await gpt2apiChatComplete({
+            url: getKey('TEXT_API_URL'),
+            key: getKey('TEXT_API_KEY'),
+            model: textModel,
+            maxTokens: 512,
+            thinking: /deepseek/i.test(textModel) ? { type: 'disabled' } : undefined,
+            messages: [
+                { role: 'system', content: systemInstruction },
+                { role: 'user', content: prompt },
+            ],
         });
 
-        let text = "";
-
-        // Handle @google/genai SDK response structure
-        if (result.candidates && result.candidates.length > 0) {
-            const candidate = result.candidates[0];
-            if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-                text = candidate.content.parts[0].text || "";
-            }
-        }
-        // Fallback for other potential response shapes
-        else if (result.response && typeof result.response.text === 'function') {
-            text = result.response.text();
-        }
-
         if (!text) {
-            console.warn('[Gemini Optimize] Warning: No text content found in response.');
+            console.warn('[OptimizePrompt] Warning: empty response.');
             return res.status(500).json({ error: 'Failed to optimize prompt' });
         }
 

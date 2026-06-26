@@ -24,12 +24,21 @@ import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
 /** 一个 turn 内最多自主调用工具的轮数（防失控成本），由路由侧据此兜底。 */
 export const MAX_AGENT_STEPS = 10;
 
-// 读取 gpt2api 文本配置
+// 读取文字模型配置（聊天 Agent / function calling）
 function getTextConfig() {
     return {
         apiKey: getKey('TEXT_API_KEY'),
         baseUrl: getKey('TEXT_API_URL'),
         model: getKey('TEXT_MODEL') || 'grok-4.20-fast',
+    };
+}
+
+// 读取视觉模型配置（看图，留空回退到文字端点）
+function getVisionConfig() {
+    return {
+        apiKey: getKey('VISION_API_KEY'),
+        baseUrl: getKey('VISION_API_URL'),
+        model: getKey('VISION_MODEL') || 'mimo-v2.5',
     };
 }
 
@@ -299,20 +308,40 @@ async function runModel(working, onDelta) {
     };
 }
 
-/** 构造发给模型的用户消息 content：有媒体则用多模态 parts，否则纯文本 */
-function buildUserContent(content, media) {
-    if (media && Array.isArray(media) && media.length > 0) {
-        const parts = [{ type: 'text', text: content || 'What do you see in these images?' }];
-        for (const m of media) {
-            const resolved = resolveImageToBase64(m.base64 || m.url);
-            if (!resolved) continue;
-            const mimeType = m.type === 'video' ? 'video/mp4' : 'image/png';
-            const base64Data = resolved.includes(',') ? resolved.split(',')[1] : resolved;
-            parts.push({ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } });
+/**
+ * 文字模型（如 DeepSeek）多为纯文本，对 image_url 直接报错。
+ * 本轮带图片时，先用视觉模型(MiMo/GLM-V)把每张图转成文字描述，
+ * 再以纯文本喂给文字模型，这样 Agent 既能"看图"又保留 function calling。
+ */
+async function describeMediaToText(media) {
+    if (!Array.isArray(media) || media.length === 0) return '';
+    const { apiKey, baseUrl, model } = getVisionConfig();
+    if (!apiKey) return '';
+    const lines = [];
+    let imgIdx = 0;
+    for (const m of media) {
+        if (m.type === 'video') { lines.push('（用户附带了一个视频，暂不支持直接分析其画面）'); continue; }
+        const resolved = resolveImageToBase64(m.base64 || m.url);
+        if (!resolved) continue;
+        imgIdx++;
+        const base64Data = resolved.includes(',') ? resolved.split(',')[1] : resolved;
+        const dataUrl = `data:image/png;base64,${base64Data}`;
+        try {
+            const desc = await gpt2apiChat({
+                messages: [{ role: 'user', content: [
+                    { type: 'text', text: '详细描述这张图片的内容、主体、风格、颜色与构图，用中文，简洁但信息完整。' },
+                    { type: 'image_url', image_url: { url: dataUrl } },
+                ] }],
+                model, baseUrl, apiKey, maxTokens: 1024,
+            });
+            lines.push(`图${imgIdx}：${(desc || '').trim() || '（无法识别）'}`);
+        } catch (e) {
+            console.error('[Agent] vision describe failed:', e.message);
+            lines.push(`图${imgIdx}：（图片分析失败：${e.message}）`);
         }
-        return parts;
     }
-    return content || '';
+    if (!lines.length) return '';
+    return `\n\n[用户本轮附带的图片内容如下（由视觉模型识别）]\n${lines.join('\n')}`;
 }
 
 /** 把模型返回转成可加入消息栈的 assistant 消息 */
@@ -377,8 +406,10 @@ export async function sendMessage(sessionId, content, media, onDelta) {
 
     // 历史（干净视图）转 OpenAI 消息
     const history = session.messages.map(m => ({ role: m.role, content: m.content }));
-    // 本轮用户消息（多模态用于模型）
-    const userContent = buildUserContent(content, media);
+    // 本轮用户消息：带图片时先用视觉模型转成文字描述，再以纯文本喂给文字模型
+    // （文字模型如 DeepSeek 不接受 image_url，且需保留 function calling）。
+    const visionText = await describeMediaToText(media);
+    const userContent = [content || '', visionText].filter(Boolean).join('') || (media?.length ? '请分析我发的图片。' : '');
     const working = [...history, { role: 'user', content: userContent }];
 
     // 持久化用户消息（干净视图：原始文字 + 媒体落盘路径）

@@ -12,6 +12,20 @@ import {
   Wand2
 } from 'lucide-react';
 
+// 悬停即时提示：图标右侧弹出标签（比原生 title 更快、有样式）
+const Tip: React.FC<{ label: string; isDark: boolean; hidden?: boolean; children: React.ReactNode }> = ({ label, isDark, hidden, children }) => (
+  <div className="relative group/tt flex items-center justify-center">
+    {children}
+    {!hidden && (
+      <span
+        className={`pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md text-xs whitespace-nowrap opacity-0 group-hover/tt:opacity-100 transition-opacity duration-150 shadow-lg z-[60] ${isDark ? 'bg-neutral-800 text-neutral-100 border border-neutral-700' : 'bg-white text-neutral-800 border border-neutral-200'}`}
+      >
+        {label}
+      </span>
+    )}
+  </div>
+);
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -74,42 +88,51 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div className={`fixed left-4 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2 p-1 rounded-full shadow-2xl z-50 transition-colors duration-300 ${isDark ? 'bg-[#1a1a1a] border border-neutral-800' : 'bg-white/90 backdrop-blur-sm border border-neutral-200'
       }`}>
-      <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center hover:scale-110 transition-all duration-200 mb-2 ${isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-neutral-900 text-white hover:bg-neutral-700'
-          }`}
-        onClick={onAddClick}
-      >
-        <Plus size={20} />
-      </button>
+      <Tip label="新建节点" isDark={isDark}>
+        <button
+          className={`w-10 h-10 rounded-full flex items-center justify-center hover:scale-110 transition-all duration-200 mb-2 ${isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-neutral-900 text-white hover:bg-neutral-700'
+            }`}
+          onClick={onAddClick}
+          title="新建节点"
+        >
+          <Plus size={20} />
+        </button>
+      </Tip>
 
-      <div className="flex flex-col gap-4 py-2 px-1">
-        <button
-          className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
-            }`}
-          onClick={onWorkflowsClick}
-          title="我的工作流"
-        >
-          <LayoutGrid size={20} />
-        </button>
-        <button
-          className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
-            }`}
-          title="素材"
-          onClick={onAssetsClick}
-        >
-          <ImageIcon size={20} />
-        </button>
-        <button
-          className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
-            }`}
-          onClick={onHistoryClick}
-          title="历史"
-        >
-          <History size={20} />
-        </button>
+      <div className="flex flex-col gap-4 pt-2 pb-4 px-1">
+        <Tip label="我的工作流" isDark={isDark}>
+          <button
+            className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            onClick={onWorkflowsClick}
+            title="我的工作流"
+          >
+            <LayoutGrid size={20} />
+          </button>
+        </Tip>
+        <Tip label="素材库" isDark={isDark}>
+          <button
+            className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            title="素材库"
+            onClick={onAssetsClick}
+          >
+            <ImageIcon size={20} />
+          </button>
+        </Tip>
+        <Tip label="历史记录" isDark={isDark}>
+          <button
+            className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            onClick={onHistoryClick}
+            title="历史记录"
+          >
+            <History size={20} />
+          </button>
+        </Tip>
 
         {/* Tools Dropdown */}
-        <div className="relative" ref={toolsRef}>
+        <div className="relative group/tt flex items-center justify-center" ref={toolsRef}>
           <button
             className={`hover:scale-125 transition-all duration-200 ${isDark
               ? `text-neutral-400 hover:text-white ${isToolsOpen ? 'text-white' : ''}`
@@ -121,10 +144,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               }
               setIsToolsOpen(!isToolsOpen);
             }}
-            title="AI"
+            title="AI 创作"
           >
             <Sparkles size={20} />
           </button>
+          {!isToolsOpen && (
+            <span className={`pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md text-xs whitespace-nowrap opacity-0 group-hover/tt:opacity-100 transition-opacity duration-150 shadow-lg z-[60] ${isDark ? 'bg-neutral-800 text-neutral-100 border border-neutral-700' : 'bg-white text-neutral-800 border border-neutral-200'}`}>
+              AI 创作
+            </span>
+          )}
 
           {/* Dropdown Menu */}
           {isToolsOpen && (
@@ -164,33 +192,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </div>
 
         {/* Video Studio (视频剪辑) */}
-        <button
-          className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
-            }`}
-          onClick={onVideoStudioClick}
-          title="视频剪辑"
-        >
-          <Scissors size={20} />
-        </button>
+        <Tip label="视频剪辑" isDark={isDark}>
+          <button
+            className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            onClick={onVideoStudioClick}
+            title="视频剪辑"
+          >
+            <Scissors size={20} />
+          </button>
+        </Tip>
       </div>
-
-      <div className={`w-8 h-[1px] my-1 ${isDark ? 'bg-neutral-800' : 'bg-neutral-200'}`}></div>
-
-      {/* 开源仓库链接（EXE 中经 setWindowOpenHandler 在系统浏览器打开） */}
-      <a
-        href="https://github.com/28998306/MagicalCanvas"
-        target="_blank"
-        rel="noopener noreferrer"
-        title="开源地址：github.com/28998306/MagicalCanvas"
-        className={`w-8 h-8 rounded-full mb-2 flex items-center justify-center hover:scale-110 transition-all duration-200 ${isDark
-          ? 'border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500'
-          : 'border border-neutral-300 text-neutral-500 hover:text-neutral-900 hover:border-neutral-400'
-          }`}
-      >
-        <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
-        </svg>
-      </a>
     </div>
   );
 };

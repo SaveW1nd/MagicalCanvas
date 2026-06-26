@@ -7,12 +7,14 @@
  */
 
 import React, { useState, useRef, useEffect, memo } from 'react';
-import { Sparkles, Banana, Settings2, Check, ChevronDown, ChevronUp, GripVertical, Image as ImageIcon, Film, Clock, Expand, Shrink, Monitor, Crop, HardDrive } from 'lucide-react';
+import { Sparkles, Banana, Settings2, Check, ChevronDown, ChevronUp, GripVertical, Image as ImageIcon, Film, Clock, Expand, Shrink, Monitor, Crop, HardDrive, Wand2, Loader2 } from 'lucide-react';
 import { NodeData, NodeStatus, NodeType } from '../../types';
 import { OpenAIIcon, GoogleIcon, KlingIcon, HailuoIcon } from '../icons/BrandIcons';
 import { useFaceDetection } from '../../hooks/useFaceDetection';
 import { ChangeAnglePanel } from './ChangeAnglePanel';
 import { LocalModel, getLocalModels } from '../../services/localModelService';
+import { showToast } from '../Toast';
+import { optimizePromptRequest, describeImageRequest } from '../../utils/aiPrompt';
 
 interface NodeControlsProps {
     data: NodeData;
@@ -165,6 +167,12 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
     const [showModelDropdown, setShowModelDropdown] = useState(false);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [localPrompt, setLocalPrompt] = useState(data.prompt || '');
+    const [isOptimizing, setIsOptimizing] = useState(false);
+    const [isDescribing, setIsDescribing] = useState(false);
+    // AI 建议（优化/看图结果）存于节点数据 data.promptSuggestion，
+    // 这样面板收起/重选节点时不会丢；点「采用」才写入提示词。
+    const suggestion = data.promptSuggestion || null;
+    const setSuggestion = (s: { text: string; kind: 'optimize' | 'describe' } | null) => onUpdate(data.id, { promptSuggestion: s });
     const dropdownRef = useRef<HTMLDivElement>(null);
     const aspectRatioDropdownRef = useRef<HTMLDivElement>(null);
     const durationDropdownRef = useRef<HTMLDivElement>(null);
@@ -291,6 +299,49 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
         updateTimeoutRef.current = setTimeout(() => {
             onUpdate(data.id, { prompt: value });
         }, 300); // 300ms debounce - increased for smoother typing
+    };
+
+    // 写回提示词（同时更新本地输入框与父级状态）
+    const applyPrompt = (text: string) => {
+        const t = (text || '').trim();
+        if (!t) return;
+        setLocalPrompt(t);
+        lastSentPromptRef.current = t;
+        onUpdate(data.id, { prompt: t });
+    };
+
+    // 🪄 优化：把现有提示词改写得更电影感（走 DeepSeek 文字模型）
+    const handleOptimizePrompt = async () => {
+        if (!localPrompt.trim() || isOptimizing || isDescribing) return;
+        setIsOptimizing(true);
+        try {
+            const t = await optimizePromptRequest(localPrompt);
+            setSuggestion({ text: t, kind: 'optimize' });
+        } catch (e) {
+            console.error('Optimize prompt failed:', e);
+            showToast('提示词优化失败，请重试', 'error');
+        } finally {
+            setIsOptimizing(false);
+        }
+    };
+
+    // ✨ 看图：用连接的父图自动写出提示词（走视觉模型 MiMo）
+    const handleDescribeImage = async () => {
+        const src = connectedImageNodes?.[0]?.url;
+        if (!src || isDescribing || isOptimizing) return;
+        setIsDescribing(true);
+        try {
+            const promptText = data.type === NodeType.VIDEO
+                ? '详细描述这张图片，用于视频生成，聚焦动作、运动与氛围，中文，60 字以内。'
+                : '详细描述这张图片的内容、主体、风格、颜色与构图，用于图像生成，中文。';
+            const t = await describeImageRequest(src, promptText);
+            setSuggestion({ text: t, kind: 'describe' });
+        } catch (e) {
+            console.error('Describe image failed:', e);
+            showToast('看图生成失败，请重试', 'error');
+        } finally {
+            setIsDescribing(false);
+        }
     };
 
     const handleSizeSelect = (value: string) => {
@@ -595,7 +646,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                     ? "描述如何让这一帧动起来…"
                                     : "描述你想要生成的内容…"
                         }
-                        rows={data.isPromptExpanded ? 12 : 4}
+                        rows={data.isPromptExpanded ? 8 : 2}
                         value={localPrompt}
                         onChange={(e) => handlePromptChange(e.target.value)}
                         onWheel={(e) => e.stopPropagation()}
@@ -609,8 +660,34 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                             }
                         }}
                     />
-                    {/* Expand/Shrink Button - Below textarea */}
-                    <div className="flex justify-end mt-1">
+                    {/* AI 辅助 + Expand/Shrink Button - Below textarea */}
+                    <div className="flex justify-between items-center mt-1">
+                        {/* 左：AI 辅助提示词 */}
+                        <div className="flex items-center gap-1">
+                            {/* ✨ 看图：有连接的父图时可用，自动写出提示词 */}
+                            {connectedImageNodes && connectedImageNodes.length > 0 && (
+                                <button
+                                    onClick={handleDescribeImage}
+                                    disabled={isDescribing || isOptimizing}
+                                    className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded transition-colors disabled:opacity-50 text-purple-400 ${isDark ? 'hover:text-purple-300 hover:bg-neutral-700' : 'hover:text-purple-500 hover:bg-neutral-200'}`}
+                                    title="根据连接的图片自动生成提示词"
+                                >
+                                    {isDescribing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                    <span>看图</span>
+                                </button>
+                            )}
+                            {/* 🪄 优化：有文字时可用，改写得更电影感 */}
+                            <button
+                                onClick={handleOptimizePrompt}
+                                disabled={!localPrompt.trim() || isOptimizing || isDescribing}
+                                className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded transition-colors disabled:opacity-50 text-blue-400 ${isDark ? 'hover:text-blue-300 hover:bg-neutral-700' : 'hover:text-blue-500 hover:bg-neutral-200'}`}
+                                title="使用 AI 增强你的提示词"
+                            >
+                                {isOptimizing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                                <span>优化</span>
+                            </button>
+                        </div>
+                        {/* 右：展开/收起 */}
                         <button
                             onClick={() => onUpdate(data.id, { isPromptExpanded: !data.isPromptExpanded })}
                             className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded transition-colors ${isDark ? 'text-neutral-500 hover:text-white hover:bg-neutral-700' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200'}`}
@@ -620,6 +697,42 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                             <span>{data.isPromptExpanded ? '收起' : '展开'}</span>
                         </button>
                     </div>
+                    {/* AI 建议卡片：先给用户看，点「采用」才替换提示词，可「放弃」保留原文 */}
+                    {suggestion && (
+                        <div
+                            className={`mt-2 p-2 rounded-lg border ${isDark ? 'bg-neutral-900 border-neutral-700' : 'bg-neutral-50 border-neutral-200'}`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                        >
+                            <div className={`flex items-center gap-1 text-[10px] mb-1 ${suggestion.kind === 'optimize' ? 'text-blue-400' : 'text-purple-400'}`}>
+                                {suggestion.kind === 'optimize' ? <Wand2 size={11} /> : <Sparkles size={11} />}
+                                <span>{suggestion.kind === 'optimize' ? 'AI 优化建议' : 'AI 看图建议'}</span>
+                                <span className={isDark ? 'text-neutral-600' : 'text-neutral-400'}>· 可编辑后采用</span>
+                            </div>
+                            <textarea
+                                value={suggestion.text}
+                                onChange={(e) => setSuggestion({ ...suggestion, text: e.target.value })}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}
+                                rows={4}
+                                className={`w-full text-xs rounded p-1.5 resize-none outline-none border ${isDark ? 'bg-neutral-950 border-neutral-700 text-neutral-200 focus:border-blue-500/50' : 'bg-white border-neutral-200 text-neutral-800 focus:border-blue-500/50'}`}
+                            />
+                            <div className="flex justify-end gap-1.5 mt-2">
+                                <button
+                                    onClick={() => setSuggestion(null)}
+                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${isDark ? 'text-neutral-400 hover:text-white hover:bg-neutral-700' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200'}`}
+                                >
+                                    放弃
+                                </button>
+                                <button
+                                    onClick={() => { applyPrompt(suggestion.text); setSuggestion(null); }}
+                                    className="px-2 py-0.5 text-[10px] rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                                >
+                                    采用
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

@@ -24,10 +24,14 @@ export const SETTINGS_KEYS = [
     // 统一 gpt2api 接入（填一次，下面各类留空即复用此处）
     'GPT2API_API_URL',
     'GPT2API_API_KEY',
-    // 文字模型
+    // 文字模型（聊天 Agent / 提示词优化；function calling）
     'TEXT_API_URL',
     'TEXT_API_KEY',
     'TEXT_MODEL',
+    // 视觉模型（看图描述 / 聊天看图；留空则回退到文字模型端点）
+    'VISION_API_URL',
+    'VISION_API_KEY',
+    'VISION_MODEL',
     // 图片模型
     'IMAGE_API_URL',
     'IMAGE_API_KEY',
@@ -49,6 +53,7 @@ export const SETTINGS_KEYS = [
 export const DEFAULTS = {
     GPT2API_API_URL: 'https://www.gpt2api.com/v1',
     TEXT_MODEL: 'grok-4.20-fast',
+    VISION_MODEL: 'mimo-v2.5',
     IMAGE_MODEL: 'nano-banana-pro',
     VIDEO_MODEL: 'veo3.1-lite',
     ASR_MODEL: 'whisper-1',
@@ -65,6 +70,9 @@ const UNIFIED_FALLBACK = {
     IMAGE_API_KEY: 'GPT2API_API_KEY',
     VIDEO_API_KEY: 'GPT2API_API_KEY',
     ASR_API_KEY: 'GPT2API_API_KEY',
+    // 视觉端点留空时回退到文字端点（transitive：再回退到统一 gpt2api）。
+    VISION_API_URL: 'TEXT_API_URL',
+    VISION_API_KEY: 'TEXT_API_KEY',
 };
 
 /**

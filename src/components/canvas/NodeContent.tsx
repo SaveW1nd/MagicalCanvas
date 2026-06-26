@@ -6,8 +6,10 @@
  */
 
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Maximize2, ImageIcon as ImageIcon, Film, Upload, Pencil, Video, GripVertical, Download, Expand, Shrink, HardDrive } from 'lucide-react';
+import { Loader2, Maximize2, ImageIcon as ImageIcon, Film, Upload, Pencil, Video, GripVertical, Download, Expand, Shrink, HardDrive, Wand2 } from 'lucide-react';
 import { NodeData, NodeStatus, NodeType } from '../../types';
+import { showToast } from '../Toast';
+import { optimizePromptRequest } from '../../utils/aiPrompt';
 
 /**
  * 带自动重试的图片：批量生成时浏览器同域并发连接（最多 6 个）可能被生图请求占满，
@@ -74,6 +76,11 @@ export const NodeContent: React.FC<NodeContentProps> = ({
 
     // Local state for text node textarea to prevent lag
     const [localPrompt, setLocalPrompt] = useState(data.prompt || '');
+    const [isOptimizing, setIsOptimizing] = useState(false);
+    // AI 优化建议存于节点数据，面板收起/重选不丢；点「采用」才写入文本
+    const suggestion = data.promptSuggestion?.text ?? null;
+    const setSuggestion = (t: string | null) =>
+        onUpdate?.(data.id, { promptSuggestion: t == null ? null : { text: t, kind: 'optimize' } });
     const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const lastSentPromptRef = useRef<string | undefined>(data.prompt); // Track what we sent
 
@@ -112,6 +119,21 @@ export const NodeContent: React.FC<NodeContentProps> = ({
         updateTimeoutRef.current = setTimeout(() => {
             onUpdate?.(data.id, { prompt: value });
         }, 150);
+    };
+
+    // 🪄 优化文本：把当前文本改写得更具画面感（走 DeepSeek 文字模型）
+    const handleOptimizeText = async () => {
+        if (!localPrompt.trim() || isOptimizing) return;
+        setIsOptimizing(true);
+        try {
+            const t = await optimizePromptRequest(localPrompt);
+            setSuggestion(t);
+        } catch (e) {
+            console.error('Optimize text failed:', e);
+            showToast('文本优化失败，请重试', 'error');
+        } finally {
+            setIsOptimizing(false);
+        }
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -183,8 +205,19 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                                 style={{ minHeight: data.isPromptExpanded ? '300px' : '150px' }}
                                 autoFocus
                             />
-                            {/* Expand/Shrink Button */}
-                            <div className="flex justify-end mt-2">
+                            {/* AI 优化 + Expand/Shrink Button */}
+                            <div className="flex justify-between items-center mt-2">
+                                {/* 🪄 优化：有文字时可用，改写得更具画面感 */}
+                                <button
+                                    onClick={handleOptimizeText}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    disabled={!localPrompt.trim() || isOptimizing}
+                                    className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-neutral-700 rounded transition-colors disabled:opacity-50"
+                                    title="使用 AI 增强你的文本提示词"
+                                >
+                                    {isOptimizing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                                    <span>优化</span>
+                                </button>
                                 <button
                                     onClick={() => onUpdate?.(data.id, { isPromptExpanded: !data.isPromptExpanded })}
                                     onPointerDown={(e) => e.stopPropagation()}
@@ -195,6 +228,49 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                                     <span>{data.isPromptExpanded ? '收起' : '展开'}</span>
                                 </button>
                             </div>
+                            {/* AI 建议卡片：先给用户看，点「采用」才替换文本，可「放弃」保留原文 */}
+                            {suggestion && (
+                                <div
+                                    className="mt-2 p-2 rounded-lg border bg-neutral-900 border-neutral-700"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onWheel={(e) => e.stopPropagation()}
+                                >
+                                    <div className="flex items-center gap-1 text-[10px] mb-1 text-blue-400">
+                                        <Wand2 size={11} />
+                                        <span>AI 优化建议</span>
+                                        <span className="text-neutral-600">· 可编辑后采用</span>
+                                    </div>
+                                    <textarea
+                                        value={suggestion}
+                                        onChange={(e) => setSuggestion(e.target.value)}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onWheel={(e) => e.stopPropagation()}
+                                        rows={4}
+                                        className="w-full text-xs rounded p-1.5 resize-none outline-none border bg-neutral-950 border-neutral-700 text-neutral-200 focus:border-blue-500/50"
+                                    />
+                                    <div className="flex justify-end gap-1.5 mt-2">
+                                        <button
+                                            onClick={() => setSuggestion(null)}
+                                            onPointerDown={(e) => e.stopPropagation()}
+                                            className="px-2 py-0.5 text-[10px] rounded text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+                                        >
+                                            放弃
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setLocalPrompt(suggestion);
+                                                lastSentPromptRef.current = suggestion;
+                                                onUpdate?.(data.id, { prompt: suggestion });
+                                                setSuggestion(null);
+                                            }}
+                                            onPointerDown={(e) => e.stopPropagation()}
+                                            className="px-2 py-0.5 text-[10px] rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                                        >
+                                            采用
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         /* Menu Mode - Show Options */

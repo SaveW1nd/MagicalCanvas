@@ -115,13 +115,18 @@ export const ExpandedMediaModal: React.FC<ExpandedMediaModalProps> = ({
         setPosition({ x: 0, y: 0 });
     }, []);
 
+    // 用 ref 持有最新 onClose，避免父级每次渲染传入新函数导致 keydown 监听反复解绑/重绑，
+    // 否则刚打开时第一次按 ESC 可能落在"无监听"的空档里（表现为要按两下）。
+    const onCloseRef = useRef(onClose);
+    useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
     // --- Keyboard shortcuts ---
     useEffect(() => {
         if (!mediaUrl) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                onClose();
+                onCloseRef.current();
             } else if (e.key === '0') {
                 // Reset zoom with '0' key
                 setZoom(1);
@@ -135,7 +140,7 @@ export const ExpandedMediaModal: React.FC<ExpandedMediaModalProps> = ({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [mediaUrl, onClose]);
+    }, [mediaUrl]);
 
     // Don't render if no media URL
     if (!mediaUrl) return null;

@@ -23,6 +23,7 @@ interface UseWorkflowOptions {
     canvasTitle: string;
     setNodes: Dispatch<SetStateAction<NodeData[]>>;
     setGroups: Dispatch<SetStateAction<NodeGroup[]>>; // For restoring groups when loading
+    setViewport: Dispatch<SetStateAction<Viewport>>; // For restoring pan/zoom when loading
     setSelectedNodeIds: Dispatch<SetStateAction<string[]>>;
     setCanvasTitle: (title: string) => void;
     setEditingTitleValue: (value: string) => void;
@@ -36,6 +37,7 @@ export const useWorkflow = ({
     canvasTitle,
     setNodes,
     setGroups,
+    setViewport,
     setSelectedNodeIds,
     setCanvasTitle,
     setEditingTitleValue,
@@ -68,6 +70,7 @@ export const useWorkflow = ({
             if (response.ok) {
                 const result = await response.json();
                 setWorkflowId(result.id);
+                try { localStorage.setItem('mc_last_workflow_id', result.id); } catch { /* ignore */ }
                 console.log('Workflow saved:', result.id);
             }
         } catch (error) {
@@ -96,6 +99,7 @@ export const useWorkflow = ({
                 // For public workflows, don't set the workflowId so it saves as a new workflow
                 if (!isPublic) {
                     setWorkflowId(workflow.id);
+                    try { localStorage.setItem('mc_last_workflow_id', workflow.id); } catch { /* ignore */ }
                 } else {
                     setWorkflowId(null); // New copy, not linked to public workflow
                 }
@@ -104,6 +108,14 @@ export const useWorkflow = ({
                 setEditingTitleValue(workflow.title || '未命名');
                 setNodes(workflow.nodes || []);
                 setGroups(workflow.groups || []); // Restore groups
+                // Restore pan/zoom so the canvas reopens where it was saved
+                if (workflow.viewport && typeof workflow.viewport.zoom === 'number') {
+                    setViewport({
+                        x: Number(workflow.viewport.x) || 0,
+                        y: Number(workflow.viewport.y) || 0,
+                        zoom: Number(workflow.viewport.zoom) || 1,
+                    });
+                }
                 // Reset selection
                 setSelectedNodeIds([]);
                 setIsWorkflowPanelOpen(false);
@@ -118,7 +130,7 @@ export const useWorkflow = ({
             console.error('Failed to load workflow:', error);
         }
         return null;
-    }, [setNodes, setGroups, setSelectedNodeIds, setCanvasTitle, setEditingTitleValue]);
+    }, [setNodes, setGroups, setViewport, setSelectedNodeIds, setCanvasTitle, setEditingTitleValue]);
 
     /**
      * Handle workflow panel toggle from toolbar click
@@ -142,6 +154,7 @@ export const useWorkflow = ({
      */
     const resetWorkflowId = useCallback(() => {
         setWorkflowId(null);
+        try { localStorage.removeItem('mc_last_workflow_id'); } catch { /* ignore */ }
     }, []);
 
     return {

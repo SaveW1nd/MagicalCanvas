@@ -54,6 +54,7 @@ import { StoryWorkflowModal, StoryWorkflowResult } from './components/modals/Sto
 import { VideoStudioPage } from './components/videoStudio/VideoStudioPage';
 import { AppDialogHost, showAppAlert } from './components/ui/AppDialog';
 import { DesktopTitleBar } from './components/ui/DesktopTitleBar';
+import { ToastHost, showToast } from './components/Toast';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -229,6 +230,7 @@ export default function App() {
     canvasTitle,
     setNodes,
     setGroups,
+    setViewport,
     setSelectedNodeIds,
     setCanvasTitle,
     setEditingTitleValue,
@@ -278,9 +280,36 @@ export default function App() {
   // Load workflow and update tracking
   const handleLoadWithTracking = async (id: string) => {
     ignoreNextChange.current = true;
+    skipNextTitleSave.current = true; // 加载时设的标题不要触发保存
     await handleLoadWorkflow(id);
     setIsDirty(false);
   };
+
+  // 启动时自动恢复上次的画布（含标题）。无本地持久化时，刷新会丢画布/标题，
+  // 让用户以为"改名没保存"。这里用 localStorage 记的最近 workflowId 自动加载。
+  const didAutoRestore = React.useRef(false);
+  React.useEffect(() => {
+    if (didAutoRestore.current) return;
+    didAutoRestore.current = true;
+    let lastId: string | null = null;
+    try { lastId = localStorage.getItem('mc_last_workflow_id'); } catch { /* ignore */ }
+    if (lastId) {
+      handleLoadWithTracking(lastId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 重命名画布后立即保存（否则只靠 60s 自动保存，改名易丢）。跳过首次挂载/加载/空画布。
+  const skipNextTitleSave = React.useRef(true);
+  const titleSaveTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  React.useEffect(() => {
+    if (skipNextTitleSave.current) { skipNextTitleSave.current = false; return; }
+    if (nodes.length === 0) return; // 空画布不创建
+    if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
+    titleSaveTimer.current = setTimeout(() => { handleSaveWithTracking(); }, 500);
+    return () => { if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasTitle]);
 
   const { handleGenerate } = useGeneration({
     nodes,
@@ -376,14 +405,20 @@ export default function App() {
         } else {
           x = baseX; y = baseY + rootCount * GAP_Y; rootCount++;
         }
-        // 生成路由按 node.type 决定（image→图片模型/video→视频模型），model 字段仅作标签，
-        // 与现有 UI 建点行为保持一致（统一 'Banana Pro'）。
+        // 模型选择：agent 没传则 image 默认 nano_banana / video 默认 omni_flash；
+        // model 字段是节点标签，imageModel/videoModel 才是真用于生成的字段
+        // （后端 /api/generate-image|video 接收并优先于全局 IMAGE_MODEL/VIDEO_MODEL）。
+        const pickedImageModel = nodeType === NodeType.IMAGE ? (a.imageModel || 'nano_banana') : undefined;
+        const pickedVideoModel = nodeType === NodeType.VIDEO ? (a.videoModel || 'omni_flash') : undefined;
         newNodes.push({
           id, type: nodeType, title: a.title || undefined, x, y,
-          prompt: a.prompt || '', status: NodeStatus.IDLE, model: 'Banana Pro',
+          prompt: a.prompt || '', status: NodeStatus.IDLE,
+          model: pickedImageModel || pickedVideoModel || 'text',
+          imageModel: pickedImageModel,
+          videoModel: pickedVideoModel,
           aspectRatio: a.aspectRatio || 'Auto', resolution: 'Auto', parentIds,
         });
-        results.push(pack(tc.id, { ok: true, id, nodeType: a.nodeType || 'image' }));
+        results.push(pack(tc.id, { ok: true, id, nodeType: a.nodeType || 'image', imageModel: pickedImageModel, videoModel: pickedVideoModel }));
       } else if (name === 'connect') {
         if (nodeExists(a.from) && nodeExists(a.to)) {
           connectOps.push({ parent: a.from, child: a.to });
@@ -397,6 +432,8 @@ export default function App() {
           if (a.prompt != null) patch.prompt = a.prompt;
           if (a.title != null) patch.title = a.title;
           if (a.aspectRatio != null) patch.aspectRatio = a.aspectRatio;
+          if (a.imageModel != null) patch.imageModel = a.imageModel;
+          if (a.videoModel != null) patch.videoModel = a.videoModel;
           if (Object.keys(patch).length) updateOps.push({ id: a.id, patch });
           results.push(pack(tc.id, { ok: true }));
         } else {
@@ -779,7 +816,7 @@ export default function App() {
         fail === 0
           ? `已存入素材库 ${ok} 个${kind === 'image' ? '图片' : '视频'}（分类：${category}）`
           : `存入 ${ok} 个，失败 ${fail} 个（分类：${category}）`,
-        { title: '批量存素材' }
+        '批量存素材'
       );
     } finally {
       setBatchSaving(null);
@@ -1163,6 +1200,36 @@ export default function App() {
   /**
    * Handle selecting an asset from history - creates new node with the image/video
    */
+  // 从历史面板把单个素材上传到素材库（自动选一个存在的分类）
+  const handleSaveHistoryAssetToLibrary = React.useCallback(async (
+    type: 'images' | 'videos', url: string, prompt: string, name?: string
+  ): Promise<boolean> => {
+    try {
+      let category = 'Others';
+      try {
+        const data = await fetch('/api/library/categories').then(r => r.json());
+        const list: string[] = Array.isArray(data.categories) ? data.categories : [];
+        if (list.length > 0 && !list.includes('Others')) category = list[list.length - 1];
+      } catch { /* 用默认 Others */ }
+      const res = await fetch('/api/library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceUrl: url,
+          name: name || (type === 'images' ? '图片' : '视频'),
+          category,
+          meta: { prompt: prompt || '' },
+        }),
+      });
+      if (res.ok) { showToast(`已存入素材库（分类：${category}）`, 'success'); return true; }
+      showToast('存入素材库失败', 'error');
+      return false;
+    } catch {
+      showToast('存入素材库失败', 'error');
+      return false;
+    }
+  }, []);
+
   const handleSelectAsset = (type: 'images' | 'videos', url: string, prompt: string, model?: string) => {
     // Calculate position at center of canvas
     const centerX = (window.innerWidth / 2 - viewport.x) / viewport.zoom - 170;
@@ -1603,6 +1670,7 @@ export default function App() {
         isOpen={isHistoryPanelOpen}
         onClose={closeHistoryPanel}
         onSelectAsset={handleSelectAsset}
+        onSaveToLibrary={handleSaveHistoryAssetToLibrary}
         panelY={historyPanelY}
         canvasTheme={canvasTheme}
       />
@@ -1909,6 +1977,7 @@ export default function App() {
       {/* Context Menu */}
       <ContextMenu
         state={contextMenu}
+        viewport={viewport}
         onClose={() => setContextMenu(prev => ({ ...prev, isOpen: false }))}
         onSelectType={handleContextMenuSelect}
         onUpload={handleContextUpload}
@@ -2129,6 +2198,9 @@ export default function App() {
 
       {/* 全局统一提示框 */}
       <AppDialogHost />
+
+      {/* 全局 toast（优化/看图失败等轻提示） */}
+      <ToastHost />
     </div >
   );
 }

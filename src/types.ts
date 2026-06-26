@@ -56,6 +56,7 @@ export interface NodeData {
   aspectRatio: string;
   resolution: string;
   isPromptExpanded?: boolean; // Whether the prompt editing area is expanded
+  promptSuggestion?: { text: string; kind: 'optimize' | 'describe' } | null; // AI 优化/看图建议（待用户采用/放弃，存于节点以跨面板收起保留）
   resultAspectRatio?: string; // Actual aspect ratio of the generated image (e.g., '16/9')
   generationStartTime?: number; // Timestamp when generation started (for recovery race condition prevention)
 
@@ -111,6 +112,10 @@ export interface ContextMenuState {
   isOpen: boolean;
   x: number;
   y: number;
+  // 画布世界坐标锚点（开菜单时由屏幕坐标+viewport 换算）；菜单按当前 viewport 重投影，
+  // 使其跟随画布平移/缩放，而不是固定在页面上。
+  worldX?: number;
+  worldY?: number;
   type: 'global' | 'node-connector' | 'node-options' | 'add-nodes'; // 'global' = right click on canvas, 'add-nodes' = double click
   sourceNodeId?: string; // If 'node-connector' or 'node-options', which node originated the click
   connectorSide?: 'left' | 'right';

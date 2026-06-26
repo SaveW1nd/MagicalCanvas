@@ -34,16 +34,23 @@ export const useContextMenuHandlers = ({
     // DOUBLE-CLICK & RIGHT-CLICK
     // ============================================================================
 
+    // 屏幕坐标 → 画布世界坐标（供菜单锚定，随画布平移/缩放）
+    const toWorld = useCallback((sx: number, sy: number) => ({
+        worldX: (sx - viewport.x) / viewport.zoom,
+        worldY: (sy - viewport.y) / viewport.zoom,
+    }), [viewport]);
+
     const handleDoubleClick = useCallback((e: React.MouseEvent) => {
         if ((e.target as HTMLElement).id === 'canvas-background') {
             setContextMenu({
                 isOpen: true,
                 x: e.clientX,
                 y: e.clientY,
+                ...toWorld(e.clientX, e.clientY),
                 type: 'add-nodes'
             });
         }
-    }, [setContextMenu]);
+    }, [setContextMenu, toWorld]);
 
     const handleGlobalContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
@@ -52,10 +59,11 @@ export const useContextMenuHandlers = ({
                 isOpen: true,
                 x: e.clientX,
                 y: e.clientY,
+                ...toWorld(e.clientX, e.clientY),
                 type: 'global'
             });
         }
-    }, [setContextMenu]);
+    }, [setContextMenu, toWorld]);
 
     // ============================================================================
     // NODE OPERATIONS
@@ -69,11 +77,12 @@ export const useContextMenuHandlers = ({
             isOpen: true,
             x: window.innerWidth / 2,
             y: window.innerHeight / 2,
+            ...toWorld(window.innerWidth / 2, window.innerHeight / 2),
             type: 'node-connector',
             sourceNodeId: nodeId,
             connectorSide: _direction
         });
-    }, [nodes, setContextMenu]);
+    }, [nodes, setContextMenu, toWorld]);
 
     const handleNodeContextMenu = useCallback((e: React.MouseEvent, id: string) => {
         e.preventDefault();
@@ -86,10 +95,11 @@ export const useContextMenuHandlers = ({
             isOpen: true,
             x: e.clientX,
             y: e.clientY,
+            ...toWorld(e.clientX, e.clientY),
             type: 'node-options',
             sourceNodeId: id
         });
-    }, [nodes, setContextMenu]);
+    }, [nodes, setContextMenu, toWorld]);
 
     // ============================================================================
     // CONTEXT MENU ACTIONS
@@ -116,9 +126,10 @@ export const useContextMenuHandlers = ({
             isOpen: true,
             x: rect.right + 10,
             y: rect.top,
+            ...toWorld(rect.right + 10, rect.top),
             type: 'global'
         });
-    }, [setContextMenu]);
+    }, [setContextMenu, toWorld]);
 
     // ============================================================================
     // RETURN
