@@ -17,6 +17,9 @@ import videoStudioRoutes from './routes/video-studio.js';
 import storyWorkflowRoutes from './routes/story-workflow.js';
 import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
+import authRoutes from './routes/auth.js';
+import { requireAuth } from './auth/middleware.js';
+import { bootstrapAdmin } from './auth/bootstrap.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +57,21 @@ app.use('/library', (req, res, next) => {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     next();
 }, express.static(LIBRARY_DIR));
+
+// ============================================================================
+// AUTH (P0): mount auth routes, then require login for all other /api/* routes
+// ----------------------------------------------------------------------------
+// Allowlist (no auth): GET /api/health (registered above), /api/auth/*,
+// and GET /api/public-workflows* (public sharing). Static /library stays open
+// for now (img/video tags can't send Authorization); P1 will namespace media.
+// ============================================================================
+app.use('/api/auth', authRoutes);
+
+app.use('/api', (req, res, next) => {
+    if (req.method === 'GET' && req.path === '/health') return next();
+    if (req.method === 'GET' && req.path.startsWith('/public-workflows')) return next();
+    return requireAuth(req, res, next);
+});
 
 
 // ============================================================================
@@ -1483,6 +1501,13 @@ if (process.env.NODE_ENV === 'production') {
         if (req.path.startsWith('/api') || req.path.startsWith('/library')) return next();
         res.sendFile(path.join(distPath, 'index.html'));
     });
+}
+
+// Ensure an initial admin exists (prints credentials on first run).
+try {
+    bootstrapAdmin();
+} catch (e) {
+    console.error('[auth] bootstrap admin failed:', e.message);
 }
 
 app.listen(PORT, () => {

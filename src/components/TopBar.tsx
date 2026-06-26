@@ -5,8 +5,9 @@
  */
 
 import React, { useState } from 'react';
-import { Plus, Save, Loader2, Settings, Pencil } from 'lucide-react';
+import { Plus, Save, Loader2, Settings, Pencil, LogOut } from 'lucide-react';
 import { SettingsModal } from './modals/SettingsModal';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TopBarProps {
     // Title
@@ -48,6 +49,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     const [showNewConfirm, setShowNewConfirm] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const { user, logout } = useAuth();
 
     const handleTitleBlur = () => {
         if (editingTitleValue.trim()) {
@@ -188,6 +190,27 @@ export const TopBar: React.FC<TopBarProps> = ({
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                         )}
                     </button>
+                    {/* 用户 / 退出登录 */}
+                    {user && (
+                        <div className="flex items-center gap-1.5 pl-1">
+                            <span
+                                className={`hidden sm:inline text-xs max-w-[120px] truncate ${canvasTheme === 'dark' ? 'text-neutral-400' : 'text-neutral-500'}`}
+                                title={`${user.username}${user.role === 'admin' ? '（管理员）' : ''} · ${user.email}`}
+                            >
+                                {user.username}{user.role === 'admin' ? ' · 管理员' : ''}
+                            </span>
+                            <button
+                                onClick={() => { void logout(); }}
+                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors border ${canvasTheme === 'dark'
+                                    ? 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                    : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50 shadow-sm'
+                                    }`}
+                                title="退出登录"
+                            >
+                                <LogOut size={18} />
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 

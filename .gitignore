@@ -57,3 +57,8 @@ models/
 # editor / hand backup files
 *.bak
 *.bak[0-9]
+
+# SQLite (users/auth/registry) — local only
+magicalcanvas.db
+magicalcanvas.db-wal
+magicalcanvas.db-shm
