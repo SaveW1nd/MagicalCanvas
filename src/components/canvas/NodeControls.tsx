@@ -49,22 +49,15 @@ const VIDEO_DURATIONS = [5, 6, 8, 10];
 const VIDEO_ASPECT_RATIOS = ["16:9", "9:16"];
 
 const VIDEO_MODELS = [
-    // gpt2api.com 视频模型
-    { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, recommended: true, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'veo3.1', name: 'VEO 3.1', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'veo3.1-flash', name: 'VEO 3.1 Flash', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'sora', name: 'Sora 2', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 8, 12], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [6, 10, 20, 30], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16', '1:1'] },
-    { id: 'veo-3.1', name: 'Veo 3.1', provider: 'google', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [4, 6, 8], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    // Kling AI models - Consolidated: removed legacy v1, v1-5, v1-6, v2-master
-    { id: 'kling-v2-1', name: 'Kling V2.1', provider: 'kling', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, recommended: true, durations: [5, 10], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'kling-v2-1-master', name: 'Kling V2.1 Master', provider: 'kling', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [5, 10], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'kling-v2-5-turbo', name: 'Kling V2.5 Turbo', provider: 'kling', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [5, 10], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'kling-v2-6', name: 'Kling 2.6 (Motion)', provider: 'kling', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [5, 10], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    // Hailuo AI (MiniMax) models - Note: API appears to only output 5s videos regardless of duration param
-    { id: 'hailuo-2.3', name: 'Hailuo 2.3', provider: 'hailuo', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [5], resolutions: ['768p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'hailuo-2.3-fast', name: 'Hailuo 2.3 Fast', provider: 'hailuo', supportsTextToVideo: false, supportsImageToVideo: true, supportsMultiImage: false, durations: [5], resolutions: ['768p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'hailuo-02', name: 'Hailuo 02', provider: 'hailuo', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [5], resolutions: ['768p', '1080p'], aspectRatios: ['16:9', '9:16'] },
+    // 实际生效的是 fp（Google Flow 指纹窗口）的视频模型，经 OpenAI 兼容 /v1/video/generations 出片。
+    // 时长档来自 flow 注册表权威数据；后端按 (档位,模式,时长,朝向) 精确选 wire-key。
+    // Omni Flash：4/6/8/10s，支持文生/图生/多图参考(≤7)，不支持首尾帧。
+    { id: 'veo-omni-flash', name: 'Omni Flash', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, supportsFirstLastFrame: false, recommended: true, durations: [4, 6, 8, 10], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
+    // Veo 3.1 三档：支持文生/图生/首尾帧；Lite/Fast 支持多图参考(≤3)，Quality 不支持。
+    // 实测：当前 Google 账号 tier 只开放 Veo 8s，4s/6s 调用返回 403（权限门控）→ 暂只暴露 8s；账号升级后可恢复 [4,6,8]。
+    { id: 'veo-3-1-fast', name: 'VEO 3.1 Fast', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, supportsFirstLastFrame: true, durations: [8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
+    { id: 'veo-3-1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, supportsFirstLastFrame: true, durations: [8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
+    { id: 'veo-3-1-quality', name: 'VEO 3.1 Quality', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, supportsFirstLastFrame: true, durations: [8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
 ];
 
 // Image model versions with metadata
@@ -75,83 +68,28 @@ const VIDEO_MODELS = [
 // Note: Kling V2/V2.1 only support references via Multi-Image API
 // aspectRatios: Supported aspect ratios for the model
 const IMAGE_MODELS = [
-    // gpt2api.com 图像模型
+    // 实际生效的是 fp（Google Flow 指纹窗口）提供的 Nano Banana 系列，经 OpenAI 兼容 /v1/images/generations 出图。
+    // gpt2api.com 上游目前不出图、OpenAI/Kling 也不走 fp，故下拉只保留这两个真正能出图的模型。
     {
-        id: 'nano-banana-pro',
+        id: 'nana-banana-pro',
         name: 'Nano Banana Pro',
         provider: 'gpt2api',
         supportsImageToImage: true,
         supportsMultiImage: true,
         recommended: true,
         resolutions: ["1K", "2K", "4K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        // flow Nano Banana 仅支持这 5 个比例（SQUARE/PORTRAIT/LANDSCAPE/PORTRAIT_3_4/LANDSCAPE_4_3）+ Auto
+        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3"]
     },
     {
-        id: 'nano-banana-v2',
-        name: 'Nano Banana V2',
+        id: 'nana-banana-2',
+        name: 'Nano Banana 2',
         provider: 'gpt2api',
         supportsImageToImage: true,
         supportsMultiImage: true,
         resolutions: ["1K", "2K", "4K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
-    },
-    {
-        id: 'nano-banana',
-        name: 'Nano Banana',
-        provider: 'gpt2api',
-        supportsImageToImage: true,
-        supportsMultiImage: true,
-        resolutions: ["1K", "2K", "4K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
-    },
-    {
-        id: 'gpt-image-2',
-        name: 'GPT Image 2',
-        provider: 'gpt2api',
-        supportsImageToImage: true,
-        supportsMultiImage: true,
-        resolutions: ["1K", "2K", "4K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
-    },
-    {
-        id: 'gpt-image-1.5',
-        name: 'GPT Image 1.5',
-        provider: 'openai',
-        supportsImageToImage: true,
-        supportsMultiImage: true,
-        recommended: true,
-        resolutions: ["Auto", "1K", "2K", "4K"],
-        // OpenAI uses exact pixel sizes, not aspect ratios
-        aspectRatios: ["Auto", "1024x1024", "1536x1024", "1024x1536"]
-    },
-    {
-        id: 'gemini-pro',
-        name: 'Nano Banana Pro',
-        provider: 'google',
-        supportsImageToImage: true,
-        supportsMultiImage: true,
-        resolutions: ["1K", "2K", "4K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
-    },
-    // Kling AI models - Consolidated: removed legacy v1, v2, v2-new
-    {
-        id: 'kling-v1-5',
-        name: 'Kling V1.5',
-        provider: 'kling',
-        supportsImageToImage: true, // V1.5 supports image_reference for subject/face
-        supportsMultiImage: false,
-        resolutions: ["1K", "2K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9"]
-    },
-    {
-        id: 'kling-v2-1',
-        name: 'Kling V2.1',
-        provider: 'kling',
-        supportsImageToImage: false, // V2.1 requires Multi-Image API
-        supportsMultiImage: true,    // Use Multi-Image API with subject_image_list
-        recommended: true,
-        resolutions: ["1K", "2K"],
-        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9"]
+        // flow Nano Banana 仅支持这 5 个比例（SQUARE/PORTRAIT/LANDSCAPE/PORTRAIT_3_4/LANDSCAPE_4_3）+ Auto
+        aspectRatios: ["Auto", "1:1", "9:16", "16:9", "3:4", "4:3"]
     },
 ];
 
@@ -369,7 +307,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
         setShowAspectRatioDropdown(false);
     };
 
-    const handleVideoModeChange = (mode: 'standard' | 'frame-to-frame') => {
+    const handleVideoModeChange = (mode: 'standard' | 'frame-to-frame' | 'ingredients') => {
         if (mode === 'frame-to-frame') {
             // Initialize frameInputs from connected nodes
             const initialFrameInputs = connectedImageNodes.slice(0, 2).map((node, idx) => ({
@@ -378,6 +316,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
             }));
             onUpdate(data.id, { videoMode: mode, frameInputs: initialFrameInputs });
         } else {
+            // standard / ingredients：不需要首尾帧排序
             onUpdate(data.id, { videoMode: mode, frameInputs: undefined });
         }
     };
@@ -416,6 +355,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
     // Video model selection logic
     const currentVideoModel = VIDEO_MODELS.find(m => m.id === data.videoModel) || VIDEO_MODELS[0];
     const isFrameToFrame = data.videoMode === 'frame-to-frame';
+    const isIngredientsMode = data.videoMode === 'ingredients';
 
     // Determine video generation mode based on inputs and settings
     // 1. Motion Control: If any parent is a video node
@@ -788,11 +728,11 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                     videoGenerationMode === 'motion-control' ? '动作控制' :
                                                         '帧到帧'}
                                         </div>
-                                        {/* gpt2api Models */}
+                                        {/* Google Flow（fp）Models */}
                                         {availableVideoModels.filter(m => m.provider === 'gpt2api').length > 0 && (
                                             <>
                                                 <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1f1f1f]">
-                                                    gpt2api
+                                                    Google Flow
                                                 </div>
                                                 {availableVideoModels.filter(m => m.provider === 'gpt2api').map(model => (
                                                     <button
@@ -925,11 +865,11 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                 imageGenerationMode === 'image-to-image' ? `图像 → 图像` :
                                                     `${inputCount} 张图像 → 图像`}
                                         </div>
-                                        {/* gpt2api Models */}
+                                        {/* Google Flow（fp）Models */}
                                         {availableImageModels.filter(m => m.provider === 'gpt2api').length > 0 && (
                                             <>
                                                 <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1f1f1f]">
-                                                    gpt2api
+                                                    Google Flow
                                                 </div>
                                                 {availableImageModels.filter(m => m.provider === 'gpt2api').map(model => (
                                                     <button
@@ -1409,8 +1349,58 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                     </div>
                                 )}
 
-                                {/* Frame Inputs - Show when 2+ nodes are connected */}
-                                {connectedImageNodes.length >= 2 && (
+                                {/* 多图模式选择：首尾帧 vs 多图参考（Ingredients）。仅 gpt2api/veo 等支持多图的模型 + 连接 ≥2 张图时显示 */}
+                                {connectedImageNodes.length >= 2 && videoGenerationMode !== 'motion-control' && currentVideoModel.supportsMultiImage && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-[10px] text-neutral-500 uppercase tracking-wider">多图模式</label>
+                                        <div className="flex gap-1 p-0.5 bg-neutral-800/60 rounded-lg">
+                                            <button
+                                                onClick={() => handleVideoModeChange('frame-to-frame')}
+                                                className={`flex-1 text-[11px] py-1.5 rounded-md transition-colors ${!isIngredientsMode ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}
+                                            >
+                                                首尾帧
+                                            </button>
+                                            <button
+                                                onClick={() => handleVideoModeChange('ingredients')}
+                                                className={`flex-1 text-[11px] py-1.5 rounded-md transition-colors ${isIngredientsMode ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}
+                                            >
+                                                多图参考
+                                            </button>
+                                        </div>
+                                        <p className="text-[10px] text-neutral-600 leading-tight">
+                                            {isIngredientsMode
+                                                ? '所有连接的图像作为参考素材（Ingredients，最多 8 张）生成视频'
+                                                : '取前两张作为起始帧 / 结束帧做插值'}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Ingredients 参考图网格 */}
+                                {isIngredientsMode && videoGenerationMode !== 'motion-control' && connectedImageNodes.length > 0 && (
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-neutral-500 uppercase tracking-wider">
+                                            参考素材 <span className="text-neutral-600">（{Math.min(connectedImageNodes.length, 8)} 张，最多 8）</span>
+                                        </label>
+                                        <div className="grid grid-cols-4 gap-1.5">
+                                            {connectedImageNodes.slice(0, 8).map((node, index) => (
+                                                <div key={node.id} className="relative aspect-square rounded-md overflow-hidden bg-black border border-neutral-700/50">
+                                                    {node.url ? (
+                                                        <img src={node.url} alt={`参考 ${index + 1}`} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center text-[9px] text-neutral-600">无预览</div>
+                                                    )}
+                                                    <span className="absolute top-0.5 left-0.5 text-[8px] font-bold px-1 rounded bg-purple-600/80 text-white">{index + 1}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {connectedImageNodes.length > 8 && (
+                                            <div className="text-[10px] text-amber-500/80">已连接 {connectedImageNodes.length} 张，仅取前 8 张</div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Frame Inputs - Show when 2+ nodes are connected（非 Ingredients 模式） */}
+                                {connectedImageNodes.length >= 2 && !isIngredientsMode && (
                                     <div className="space-y-2">
                                         <label className="text-[10px] text-neutral-500 uppercase tracking-wider">
                                             {videoGenerationMode === 'motion-control' ? '输入参考' : '已连接的帧'}

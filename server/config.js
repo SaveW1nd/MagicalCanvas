@@ -21,6 +21,9 @@ const CONFIG_PATH = path.join(CONFIG_DIR, 'twitcanva-config.json');
 // All settings keys the app understands.
 // 三类模型，每类独立配置：网址(URL) / 密钥(KEY) / 模型名(MODEL)
 export const SETTINGS_KEYS = [
+    // 统一 gpt2api 接入（填一次，下面各类留空即复用此处）
+    'GPT2API_API_URL',
+    'GPT2API_API_KEY',
     // 文字模型
     'TEXT_API_URL',
     'TEXT_API_KEY',
@@ -42,15 +45,26 @@ export const SETTINGS_KEYS = [
 ];
 
 // 默认值（当配置文件与环境变量都未设置时使用）
+// 各类 *_API_URL/*_API_KEY 不再单独设默认；留空时由 getKey 回退到统一的 GPT2API_API_URL/KEY。
 export const DEFAULTS = {
-    TEXT_API_URL: 'https://www.gpt2api.com/v1',
+    GPT2API_API_URL: 'https://www.gpt2api.com/v1',
     TEXT_MODEL: 'grok-4.20-fast',
-    IMAGE_API_URL: 'https://www.gpt2api.com/v1',
     IMAGE_MODEL: 'nano-banana-pro',
-    VIDEO_API_URL: 'https://www.gpt2api.com/v1',
     VIDEO_MODEL: 'veo3.1-lite',
     ASR_MODEL: 'whisper-1',
     GEN_CONCURRENCY: '3',
+};
+
+// 各类接入项留空时回退到统一 gpt2api 配置（填一次即可；需要分模型换源时再单独填）。
+const UNIFIED_FALLBACK = {
+    TEXT_API_URL: 'GPT2API_API_URL',
+    IMAGE_API_URL: 'GPT2API_API_URL',
+    VIDEO_API_URL: 'GPT2API_API_URL',
+    ASR_API_URL: 'GPT2API_API_URL',
+    TEXT_API_KEY: 'GPT2API_API_KEY',
+    IMAGE_API_KEY: 'GPT2API_API_KEY',
+    VIDEO_API_KEY: 'GPT2API_API_KEY',
+    ASR_API_KEY: 'GPT2API_API_KEY',
 };
 
 /**
@@ -80,7 +94,10 @@ export function getKey(name) {
     const fromFile = cfg[name];
     if (fromFile !== undefined && fromFile !== null && fromFile !== '') return String(fromFile);
     if (process.env[name]) return process.env[name];
-    return DEFAULTS[name] || '';
+    if (DEFAULTS[name]) return DEFAULTS[name];
+    // 留空时回退到统一 gpt2api 配置（TEXT/IMAGE/VIDEO/ASR 的 URL/KEY）。
+    if (UNIFIED_FALLBACK[name]) return getKey(UNIFIED_FALLBACK[name]);
+    return '';
 }
 
 /**

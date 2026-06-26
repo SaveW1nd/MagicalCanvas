@@ -9,7 +9,6 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { generateKlingVideo, generateKlingImage, generateKlingMultiImage } from '../services/kling.js';
-import { generateGeminiImage, generateVeoVideo } from '../services/gemini.js';
 import { generateHailuoVideo } from '../services/hailuo.js';
 import { generateOpenAIImage } from '../services/openai.js';
 import { resolveImageToBase64, saveBufferToFile } from '../utils/imageHelpers.js';
@@ -33,32 +32,33 @@ router.post('/generate-image', async (req, res) => {
         const { nodeId, prompt, title, aspectRatio, resolution, imageBase64: rawImageBase64, imageModel, klingReferenceMode, klingFaceIntensity, klingSubjectIntensity } = req.body;
         const { IMAGE_API_URL, IMAGE_API_KEY, IMAGE_MODEL, IMAGES_DIR } = req.app.locals;
 
-        // 始终使用「设置」里的图片模型配置（OpenAI 兼容下游）
-        const isGpt2api = true;
+        // 节点上选的模型优先；没传才回退到「设置」里的全局 IMAGE_MODEL。
+        // KleinAI 收到任何 model id 都会自己路由（flow2api 系或 OpenAI 系），
+        // 这里只需判断「是不是 flow2api 模型」选合适的客户端即可。
+        const effectiveImageModel = imageModel || IMAGE_MODEL;
         const isKlingModel = false;
-        const isOpenAIModel = false;
 
         let imageBuffer;
         let imageFormat = 'png';
 
-        if (isFlow2apiImageModel(IMAGE_MODEL)) {
-            // --- Google Flow（flow2api）出图：异步任务 + 轮询 ---
+        if (isFlow2apiImageModel(effectiveImageModel) && !isGpt2apiImageModel(effectiveImageModel)) {
+            // --- Google Flow（旧 flow2api 网关，已被 flow_native 取代；保留作回退）---
             if (!IMAGE_API_KEY) {
                 return res.status(500).json({ error: "未配置图片模型 KEY，请在「设置」中填写" });
             }
-            console.log(`Using flow2api image model: ${IMAGE_MODEL} @ ${IMAGE_API_URL}`);
+            console.log(`Using flow2api image model: ${effectiveImageModel} @ ${IMAGE_API_URL}`);
             const result = await generateFlow2apiImage({
                 prompt,
                 aspectRatio,
-                model: IMAGE_MODEL,
+                model: effectiveImageModel,
                 baseUrl: IMAGE_API_URL,
                 apiKey: IMAGE_API_KEY,
             });
             imageBuffer = result.buffer;
             imageFormat = result.format;
 
-        } else if (isGpt2api) {
-            // --- 统一图片生成（设置：网址 / KEY / 模型名）---
+        } else if (!isKlingModel) {
+            // --- 统一图片生成（KleinAI / gpt2api 系：gpt-image-*、grok、...）---
             if (!IMAGE_API_KEY) {
                 return res.status(500).json({ error: "未配置图片模型 KEY，请在「设置」中填写" });
             }
@@ -69,13 +69,13 @@ router.post('/generate-image', async (req, res) => {
                 imageBase64Array = rawImages.map(img => resolveImageToBase64(img)).filter(Boolean);
             }
 
-            console.log(`Using image model: ${IMAGE_MODEL} @ ${IMAGE_API_URL}`);
+            console.log(`Using image model: ${effectiveImageModel} @ ${IMAGE_API_URL}`);
             const result = await generateGpt2apiImage({
                 prompt,
                 imageBase64Array,
                 aspectRatio,
                 resolution,
-                model: IMAGE_MODEL,
+                model: effectiveImageModel,
                 baseUrl: IMAGE_API_URL,
                 apiKey: IMAGE_API_KEY,
             });
@@ -184,24 +184,8 @@ router.post('/generate-image', async (req, res) => {
             });
 
         } else {
-            // --- GEMINI IMAGE GENERATION (Default) ---
-            if (!GEMINI_API_KEY) {
-                return res.status(500).json({ error: "Server missing API Key config" });
-            }
-
-            let imageBase64Array = null;
-            if (rawImageBase64) {
-                const rawImages = Array.isArray(rawImageBase64) ? rawImageBase64 : [rawImageBase64];
-                imageBase64Array = rawImages.map(img => resolveImageToBase64(img)).filter(Boolean);
-            }
-
-            imageBuffer = await generateGeminiImage({
-                prompt,
-                imageBase64Array,
-                aspectRatio,
-                resolution,
-                apiKey: GEMINI_API_KEY
-            });
+            // 兜底：未知图片模型。Gemini 直连已下线，统一走 gpt2api（见上方分支）。
+            return res.status(400).json({ error: `不支持的图片模型: ${effectiveImageModel}` });
         }
 
         // Save to library - use unique filename to preserve previous generations
@@ -241,13 +225,17 @@ router.post('/generate-video', async (req, res) => {
     const reqNodeId = req.body?.nodeId;
     if (reqNodeId) activeGenerations.add(reqNodeId);
     try {
-        const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, aspectRatio, resolution, duration, videoModel } = req.body;
+        const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, characterReferenceUrls: rawCharacterReferenceUrls, aspectRatio, resolution, duration, videoModel } = req.body;
         const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL, VIDEOS_DIR } = req.app.locals;
 
         // Resolve file URLs to base64
         const imageBase64 = resolveImageToBase64(rawImageBase64);
         const lastFrameBase64 = resolveImageToBase64(rawLastFrameBase64);
         const motionReferenceUrl = resolveImageToBase64(rawMotionReferenceUrl);
+        // R2V 多参考（omni 角色/素材）→ base64 列表，传给 flow_native
+        const characterReferenceBase64 = Array.isArray(rawCharacterReferenceUrls)
+            ? rawCharacterReferenceUrls.map(resolveImageToBase64).filter(Boolean)
+            : [];
 
         // 始终使用「设置」里的视频模型配置（OpenAI 兼容下游）
         const isGpt2api = true;
@@ -256,10 +244,10 @@ router.post('/generate-video', async (req, res) => {
 
         let videoBuffer;
 
-        // flow2api 视频模型：节点选择优先，其次设置里的 VIDEO_MODEL
-        const flowVideoModel = (videoModel && isFlow2apiVideoModel(videoModel))
+        // flow2api 视频模型（旧网关，已被 flow_native 取代）：仅当不归 gpt2api(flow_native) 路由时才用，保留作回退。
+        const flowVideoModel = (videoModel && isFlow2apiVideoModel(videoModel) && !isGpt2apiVideoModel(videoModel))
             ? videoModel
-            : (isFlow2apiVideoModel(VIDEO_MODEL) ? VIDEO_MODEL : null);
+            : (isFlow2apiVideoModel(VIDEO_MODEL) && !isGpt2apiVideoModel(VIDEO_MODEL) ? VIDEO_MODEL : null);
 
         if (flowVideoModel) {
             // --- Google Flow（flow2api）出视频：异步任务 + 轮询 ---
@@ -289,6 +277,7 @@ router.post('/generate-video', async (req, res) => {
                 prompt,
                 imageBase64,
                 lastFrameBase64,
+                referenceImages: characterReferenceBase64,
                 aspectRatio,
                 resolution,
                 duration: duration || 6,
@@ -410,23 +399,8 @@ router.post('/generate-video', async (req, res) => {
             videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
 
         } else {
-            // --- VEO VIDEO GENERATION (Default) ---
-            if (!GEMINI_API_KEY) {
-                return res.status(500).json({ error: "Server missing API Key config" });
-            }
-
-            console.log(`Using Veo model: ${videoModel || 'veo-3.1'}, duration: ${duration || 8}s, generateAudio: ${req.body.generateAudio !== false}`);
-
-            videoBuffer = await generateVeoVideo({
-                prompt,
-                imageBase64,
-                lastFrameBase64,
-                aspectRatio,
-                resolution,
-                duration: duration || 8,
-                generateAudio: req.body.generateAudio !== false, // Default to true
-                apiKey: GEMINI_API_KEY
-            });
+            // 兜底：未知视频模型。Veo 直连已下线，统一走 gpt2api（见上方分支）。
+            return res.status(400).json({ error: `不支持的视频模型: ${videoModel || ''}` });
         }
 
         // Save to library - use unique filename to preserve previous generations

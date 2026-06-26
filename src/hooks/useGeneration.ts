@@ -257,10 +257,24 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     }
                 }
 
-                // Only evaluate as frame-to-frame if NOT in motion control mode
-                const isFrameToFrame = !isMotionControl && (node.videoMode === 'frame-to-frame' || hasMultipleInputs || hasExplicitFrameInputs);
+                // Ingredients（多图参考 R2V）：用户显式选择该模式时，把所有连接的图像节点作为参考图（最多 8 张）
+                const isIngredients = !isMotionControl && node.videoMode === 'ingredients' && imageParentIds.length >= 1;
+                let ingredientReferenceUrls: string[] | undefined;
+                if (isIngredients) {
+                    ingredientReferenceUrls = imageParentIds
+                        .map(pid => nodes.find(n => n.id === pid))
+                        .map(n => (n?.type === NodeType.VIDEO ? n.lastFrame : n?.resultUrl))
+                        .filter((u): u is string => !!u)
+                        .slice(0, 8);
+                }
 
-                if (isFrameToFrame && imageParentIds.length >= 2) {
+                // Only evaluate as frame-to-frame if NOT in motion control / ingredients mode
+                const isFrameToFrame = !isMotionControl && !isIngredients &&
+                    (node.videoMode === 'frame-to-frame' || hasMultipleInputs || hasExplicitFrameInputs);
+
+                if (isIngredients) {
+                    // 纯多图参考：不设首/尾帧，参考图走 characterReferenceUrls
+                } else if (isFrameToFrame && imageParentIds.length >= 2) {
                     // Get start and end frames from frameInputs (if user reordered) or default order
                     const parent1 = nodes.find(n => n.id === imageParentIds[0]);
                     const parent2 = nodes.find(n => n.id === imageParentIds[1]);
@@ -324,6 +338,8 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     duration: node.videoDuration,
                     videoModel: node.videoModel,
                     motionReferenceUrl,
+                    // R2V 多参考 → flow_native：Ingredients 模式用连接的图像节点，否则用 storyboard 角色参考
+                    characterReferenceUrls: ingredientReferenceUrls ?? node.characterReferenceUrls,
                     generateAudio: node.generateAudio, // For Kling 2.6 and Veo 3.1 native audio
                     nodeId: id,
                     title: node.title || ''

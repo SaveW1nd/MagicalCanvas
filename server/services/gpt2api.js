@@ -9,8 +9,10 @@
  */
 
 // gpt2api 提供的模型 ID（用于在生成路由里判断走哪个提供商）
-export const GPT2API_IMAGE_MODELS = ['nano-banana-pro', 'nano-banana-v2', 'nano-banana', 'gpt-image-2'];
-export const GPT2API_VIDEO_MODELS = ['grok-imagine-video', 'sora', 'veo3.1', 'veo3.1-flash', 'veo3.1-lite'];
+// 实际后端是 fp（Google Flow 窗口）的 Nano Banana 系列；保留旧 id 以兼容历史节点。
+export const GPT2API_IMAGE_MODELS = ['nana-banana-pro', 'nana-banana-2', 'nano-banana-pro', 'nano-banana-v2', 'nano-banana', 'gpt-image-2', 'gemini-pro'];
+// 实际后端是 fp（Google Flow 窗口）：veo-omni-flash(4/6/8/10s) / veo-3-1-lite|fast|quality(4/6/8s)；保留旧 id 以兼容历史节点。
+export const GPT2API_VIDEO_MODELS = ['veo-omni-flash', 'veo-3-1-lite', 'veo-3-1-fast', 'veo-3-1-quality', 'veo-3-1', 'grok-imagine-video', 'sora', 'veo3.1', 'veo3.1-flash', 'veo3.1-lite'];
 
 export const isGpt2apiImageModel = (id) => GPT2API_IMAGE_MODELS.includes(id);
 export const isGpt2apiVideoModel = (id) => GPT2API_VIDEO_MODELS.includes(id);
@@ -32,6 +34,29 @@ const RATIO_TO_SIZE = {
 
 // 图像分辨率档 → quality
 const RES_TO_IMAGE_QUALITY = { '1K': '1k', '2K': '2k', '4K': '4k' };
+
+// 画布图像模型 id（含历史 id）→ fp 公共基础名（不带 _sync / -4k）
+const FP_IMAGE_BASE = {
+    'nana-banana-pro': 'nana-banana-pro',
+    'nana-banana-2': 'nana-banana-2',
+    // 历史 id 兼容
+    'nano-banana-pro': 'nana-banana-pro',
+    'nano-banana-v2': 'nana-banana-2',
+    'nano-banana': 'nana-banana-2',
+    'gemini-pro': 'nana-banana-pro',
+};
+
+/**
+ * 把画布选的图像模型 + 分辨率档，规整成 fp 的 OpenAI 兼容模型名（必须以 _sync 结尾）。
+ * 4K 必须用 -4k 模型变体——普通模型 + resolution=4k 会被 fp 静默降级成 1k。
+ */
+function toFpImageModel(model, resolution) {
+    let m = String(model || '').trim().replace(/_sync$/i, '').replace(/-4k$/i, '');
+    const base = FP_IMAGE_BASE[m] || m || 'nana-banana-pro';
+    const q = RES_TO_IMAGE_QUALITY[resolution] || '1k';
+    const name = q === '4k' ? `${base}-4k` : base;
+    return `${name}_sync`;
+}
 // 视频分辨率 → quality
 const RES_TO_VIDEO_QUALITY = { '720p': 'hd', '1080p': 'fullhd' };
 
@@ -145,21 +170,27 @@ export async function generateGpt2apiImage({ prompt, imageBase64Array, aspectRat
     const refs = (imageBase64Array || []).map(toImageInput).filter(Boolean);
     const hasRef = refs.length > 0;
 
+    // fp 模型名（_sync，4K→-4k 变体）；分辨率/宽高比走 fp 识别的字段
+    const fpModel = toFpImageModel(model, resolution);
+    const q = RES_TO_IMAGE_QUALITY[resolution] || '1k';
+
     const body = {
-        model,
+        model: fpModel,
         prompt: prompt || '',
         n: 1,
-        size: RATIO_TO_SIZE[aspectRatio] || '1024x1024',
-        quality: RES_TO_IMAGE_QUALITY[resolution] || '1k',
         async: true,
     };
-    if (hasRef) {
-        if (refs.length === 1) body.image = refs[0];
-        else body.images = refs;
+    // 1k/2k 直接传 resolution；4k 已由模型名 -4k 决定（再传也无妨，fp 以模型为准）
+    if (q === '1k' || q === '2k') body.resolution = q;
+    // 宽高比：传干净的比例串（如 "16:9"），fp 直接识别；不要传像素尺寸（fp 会解析成 "1376:768" 之类的脏比例）
+    if (aspectRatio && aspectRatio !== 'Auto') {
+        body.aspect_ratio = aspectRatio;
+        body.ratio = aspectRatio;
     }
+    // 参考图（图生图 / 多图）：fp 没有 /images/edits，统一走 /images/generations + images 数组
+    if (hasRef) body.images = refs;
 
-    // 有参考图用 /images/edits，否则 /images/generations
-    const endpoint = hasRef ? `${base}/images/edits` : `${base}/images/generations`;
+    const endpoint = `${base}/images/generations`;
 
     const res = await fetch(endpoint, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
@@ -186,11 +217,16 @@ export async function generateGpt2apiImage({ prompt, imageBase64Array, aspectRat
 /**
  * 视频生成（文生视频 / 图生视频）。返回 Buffer(mp4)。
  */
-export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
+export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
     const startImg = toImageInput(imageBase64);
+    const endImg = toImageInput(lastFrameBase64);
+    // Ingredients（R2V 多图参考）：最多 8 张，转成 data URL / URL 输入
+    const ingredientImgs = Array.isArray(referenceImages)
+        ? referenceImages.map(toImageInput).filter(Boolean).slice(0, 8)
+        : [];
     const body = {
         model,
         prompt: prompt || '',
@@ -200,6 +236,10 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
     if (aspectRatio && aspectRatio !== 'Auto') body.ratio = aspectRatio;
     if (resolution && RES_TO_VIDEO_QUALITY[resolution]) body.quality = RES_TO_VIDEO_QUALITY[resolution];
     if (startImg) body.image = startImg;
+    // 尾帧（首尾帧插值）→ fp 适配端点识别 last_frame / lastFrameBase64
+    if (endImg) body.last_frame = endImg;
+    // Ingredients 多图参考 → fp 适配端点识别 Ingredients_images
+    if (ingredientImgs.length > 0) body.Ingredients_images = ingredientImgs;
 
     const res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
