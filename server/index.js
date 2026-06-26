@@ -130,7 +130,7 @@ app.post('/api/settings', (req, res) => {
 app.post('/api/settings/test', async (req, res) => {
     try {
         const group = String((req.body && req.body.group) || 'text').toLowerCase();
-        const prefixMap = { text: 'TEXT', image: 'IMAGE', video: 'VIDEO', asr: 'ASR', gpt2api: 'GPT2API' };
+        const prefixMap = { text: 'TEXT', vision: 'VISION', image: 'IMAGE', video: 'VIDEO', asr: 'ASR', gpt2api: 'GPT2API' };
         const prefix = prefixMap[group];
         if (!prefix) return res.status(400).json({ success: false, error: `未知分组: ${group}` });
 
