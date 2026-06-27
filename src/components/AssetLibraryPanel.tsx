@@ -605,9 +605,9 @@ const AssetLibraryContent = ({
                                         ) : null}
                                         {asset.visibility === 'public' ? (
                                             <button
-                                                title="已发布，仅管理员可删"
-                                                disabled
-                                                className="p-1.5 bg-black/40 text-neutral-500 rounded-md opacity-0 group-hover:opacity-100 cursor-not-allowed"
+                                                title="已发布到公共库，仅管理员可删"
+                                                onClick={(e) => { e.stopPropagation(); showToast('已发布到公共库，仅管理员可删', 'info'); }}
+                                                className="p-1.5 bg-black/40 text-neutral-500 rounded-md opacity-0 group-hover:opacity-100 cursor-not-allowed hover:text-neutral-300"
                                             >
                                                 <Trash2 size={14} />
                                             </button>
