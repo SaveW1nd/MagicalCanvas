@@ -13,6 +13,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { canAccess } from '../auth/ownership.js';
 
 const router = express.Router();
 
@@ -245,7 +246,9 @@ function readCustom(dir) {
 /** GET / —— 列出全部模板（内置 + 自定义） */
 router.get('/', (req, res) => {
     try {
-        res.json([...BUILTIN_TEMPLATES, ...readCustom(tplDir(req))]);
+        // 内置模板全局共享；自定义模板仅本人可见
+        const custom = readCustom(tplDir(req)).filter(t => canAccess(t.ownerId, req.user));
+        res.json([...BUILTIN_TEMPLATES, ...custom]);
     } catch (e) {
         res.status(500).json({ error: e.message || '读取模板失败' });
     }
@@ -262,8 +265,12 @@ router.post('/', (req, res) => {
         const dir = tplDir(req);
         const existing = fs.existsSync(path.join(dir, `${tid}.json`))
             ? JSON.parse(fs.readFileSync(path.join(dir, `${tid}.json`), 'utf8')) : null;
+        if (existing && !canAccess(existing.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权修改该模板' });
+        }
         const tpl = {
             id: tid,
+            ownerId: existing?.ownerId || req.user.id,
             name: String(name).slice(0, 40),
             desc: String(desc || '').slice(0, 120),
             builtin: false,
@@ -287,7 +294,13 @@ router.delete('/:id', (req, res) => {
         const id = req.params.id;
         if (String(id).startsWith('builtin-')) return res.status(400).json({ error: '内置模板不可删除' });
         const file = path.join(tplDir(req), `${id}.json`);
-        if (fs.existsSync(file)) fs.unlinkSync(file);
+        if (fs.existsSync(file)) {
+            try {
+                const t = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (!canAccess(t.ownerId, req.user)) return res.status(403).json({ error: '无权删除该模板' });
+            } catch { /* corrupt -> allow */ }
+            fs.unlinkSync(file);
+        }
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ error: e.message || '删除模板失败' });

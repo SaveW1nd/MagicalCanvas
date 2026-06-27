@@ -1570,7 +1570,7 @@ if (process.env.NODE_ENV === 'production') {
 // then backfill ownerId on pre-auth data so it stays accessible (P1).
 try {
     const adminId = bootstrapAdmin();
-    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR, IMAGES_DIR, VIDEOS_DIR] });
+    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR, IMAGES_DIR, VIDEOS_DIR, path.join(LIBRARY_DIR, 'prompt-templates')] });
 } catch (e) {
     console.error('[auth] bootstrap/migrate failed:', e.message);
 }
