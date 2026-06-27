@@ -6,9 +6,12 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Trash2, FileText, Loader2, Maximize2, Pencil, Check, Upload } from 'lucide-react';
+import { X, Trash2, FileText, Loader2, Maximize2, Pencil, Check, Upload, Globe } from 'lucide-react';
 import { LazyImage } from './LazyImage';
 import { showAppAlert } from './ui/AppDialog';
+import { showToast } from './Toast';
+import { Tip } from './ui/Tip';
+import { WorkflowPreview } from './canvas/WorkflowPreview';
 
 interface WorkflowSummary {
     id: string;
@@ -49,6 +52,8 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
     const [activeTab, setActiveTab] = useState<'my' | 'public'>('my');
     const [loading, setLoading] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+    const [previewId, setPreviewId] = useState<string | null>(null); // 公共工作流只读预览
+    const [publishingId, setPublishingId] = useState<string | null>(null);
 
     // Cover editing state
     const [editingCoverFor, setEditingCoverFor] = useState<string | null>(null);
@@ -142,6 +147,27 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
             console.error('Failed to delete workflow:', error);
         }
         setDeleteConfirm(null);
+    };
+
+    // 发布工作流到公共(深拷贝,公共那份独立)
+    const handlePublish = async (id: string) => {
+        if (publishingId) return;
+        setPublishingId(id);
+        try {
+            const res = await fetch('/api/public-workflows', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workflowId: id }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { showAppAlert(data.error || '发布失败'); return; }
+            await fetchPublicWorkflows();
+            showToast('已发布到公共工作流', 'success');
+        } catch (err) {
+            showAppAlert('发布失败');
+        } finally {
+            setPublishingId(null);
+        }
     };
 
     // Load more covers callback for infinite scroll
@@ -319,25 +345,39 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
 
                                             {/* Action buttons */}
                                             <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                {/* Publish to public */}
+                                                <Tip label="发布到公共工作流">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handlePublish(workflow.id); }}
+                                                        disabled={publishingId === workflow.id}
+                                                        className="p-1 bg-black/50 hover:bg-green-600 rounded-md transition-all disabled:opacity-50"
+                                                    >
+                                                        {publishingId === workflow.id
+                                                            ? <Loader2 size={12} className="text-white animate-spin" />
+                                                            : <Globe size={12} className="text-white" />}
+                                                    </button>
+                                                </Tip>
                                                 {/* Edit cover button */}
-                                                <button
-                                                    onClick={(e) => openCoverEditor(workflow.id, e)}
-                                                    className="p-1 bg-black/50 hover:bg-blue-500 rounded-md transition-all"
-                                                    title="编辑封面"
-                                                >
-                                                    <Pencil size={12} className="text-white" />
-                                                </button>
+                                                <Tip label="编辑封面">
+                                                    <button
+                                                        onClick={(e) => openCoverEditor(workflow.id, e)}
+                                                        className="p-1 bg-black/50 hover:bg-blue-500 rounded-md transition-all"
+                                                    >
+                                                        <Pencil size={12} className="text-white" />
+                                                    </button>
+                                                </Tip>
                                                 {/* Delete button */}
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setDeleteConfirm(workflow.id);
-                                                    }}
-                                                    className="p-1 bg-black/50 hover:bg-red-500 rounded-md transition-all"
-                                                    title="删除工作流"
-                                                >
-                                                    <Trash2 size={12} className="text-white" />
-                                                </button>
+                                                <Tip label="删除工作流">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setDeleteConfirm(workflow.id);
+                                                        }}
+                                                        className="p-1 bg-black/50 hover:bg-red-500 rounded-md transition-all"
+                                                    >
+                                                        <Trash2 size={12} className="text-white" />
+                                                    </button>
+                                                </Tip>
                                             </div>
                                         </div>
                                         {/* Info */}
@@ -357,14 +397,14 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                             <div className="flex flex-col items-center justify-center h-40 text-neutral-500 gap-2">
                                 <FileText size={32} className="opacity-50" />
                                 <p>暂无公共工作流</p>
-                                <p className="text-xs text-neutral-600">将工作流 JSON 添加到 public/workflows/</p>
+                                <p className="text-xs text-neutral-600">在「我的工作流」里把工作流发布到公共</p>
                             </div>
                         ) : (
                             <div className="grid grid-cols-5 gap-3">
                                 {publicWorkflows.map(workflow => (
                                     <div
                                         key={workflow.id}
-                                        onClick={() => onLoadWorkflow(`public:${workflow.id}`)}
+                                        onClick={() => setPreviewId(workflow.id)}
                                         className="rounded-lg overflow-hidden cursor-pointer transition-all group"
                                     >
                                         {/* Thumbnail */}
@@ -485,6 +525,15 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                         )}
                     </div>
                 </div>
+            )}
+
+            {/* 公共工作流只读预览 → fork 后加载可编辑副本 */}
+            {previewId && (
+                <WorkflowPreview
+                    publicId={previewId}
+                    onClose={() => setPreviewId(null)}
+                    onForked={(newId) => { setPreviewId(null); onLoadWorkflow(newId); }}
+                />
             )}
         </>
     );
