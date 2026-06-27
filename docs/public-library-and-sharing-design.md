@@ -12,6 +12,9 @@
 > - **物理文件删除护栏:** 任何"被公共素材引用"或"被他人引用"的文件,均不得被 unlink。引用清零前文件保留(轻量引用计数)。
 > - **激进的孤儿文件 GC = 不做**(YAGNI)。孤儿文件无害,留待后续统一清扫。
 > - **管理员侧入口 = AdminConsole**(管理员登录后进后台,不进画布)。所有"管理全体素材/公共工作流"的能力放在 AdminConsole;画布侧只保留用户自己的发布/收藏/fork。
+> - **公共工作流只读预览 = 做**(用户 2026-06-27 确认)。点公共工作流先进只读预览看节点图,再决定是否 fork。
+> - **原作者撤回 = 不给**(用户确认)。发布到公共后,原作者不能撤回/删除,只有管理员能下架/删除。
+> - **收藏默认分类 = `Others`**(用户确认)。从公共"加入我的库"统一归到 `Others`。
 
 ---
 
@@ -89,7 +92,8 @@
 |---|---|---|
 | `POST` | `/api/library` **(改)** | 若 `sourceUrl` 已是服务器 `/library/...` 路径 → **不复制**,直接建行指向它;若是 `data:` URL(真·新字节,本地上传)→ 一次性落盘(唯一一份,非备份),建行。 |
 | `POST` | `/api/library/:id/publish` **(新)** | 本人素材 → `visibility='public'` + 记 `publishedAt/publishedBy`。已 public 则幂等。 |
-| `POST` | `/api/library/from-public/:publicId` **(新)** | 公共素材 → 给调用者建一行新引用 `{ownerId:me, url:<同>, sourceAssetId:publicId, visibility:'private', category:<默认/选择>}`。**零拷贝。** |
+| `POST` | `/api/library/from-public/:publicId` **(新)** | 公共素材 → 给调用者建一行新引用 `{ownerId:me, url:<同>, sourceAssetId:publicId, visibility:'private', category:'Others'}`。**零拷贝。** 默认归 `Others`(已定)。 |
+| `POST` | `/api/library/:id/category` **(新)** | body `{ category }`。本人素材改分类(只改行,不动文件)。补齐"既存素材无法改分类"的缺口(见 §4.1)。 |
 | `DELETE` | `/api/library/:id` **(改)** | 行为分流:① 该行 `visibility==='public'` → **403,提示仅管理员可删**;② 该行是引用(有 `sourceAssetId`)→ 只删行,绝不动文件;③ 私有原创 → 删行,且**仅当无其他行引用同 url 且非 public** 时才 `unlink` 文件(护栏)。 |
 
 **物理删除护栏(贯穿全部删文件路径):** 抽出 `isUrlReferencedElsewhere(url, excludeRowId)` 扫描 assets.json。在 `DELETE /api/library/:id`、`DELETE /api/assets/:type/:id`、历史清空等任何 `unlink` 前调用:若被他人行或 public 行引用 → **跳过 unlink,只删元数据**。保证公共/收藏引用永不裂。
@@ -120,15 +124,20 @@
 
 ### 4.1 `AssetLibraryPanel`(画布·素材库)
 - 顶部加 **我的 / 公共** 切换。
-- **我的**:每张自有素材 hover 出 **发布到公共**;已 public 的显示"公共"角标,且**删除按钮禁用 + tooltip**"已发布,仅管理员可删";分类 pill = 本人分类(每用户)。
+- **我的**:每张自有素材 hover 出 **发布到公共** + **改分类**(下拉本人分类,调 `/api/library/:id/category`,补齐当前"无法改分类"的缺口);已 public 的显示"公共"角标,且**删除按钮禁用 + tooltip**"已发布,仅管理员可删";分类 pill = 本人分类(每用户)。
 - **公共**:每张素材 hover 出 **加入我的库**(调 `from-public`);分类 pill = 公共素材推导集合;**无删除**(只有管理员能删,且在 AdminConsole)。
 - 收藏来的引用行在"我的"里可移除(只删指针)。
 
 ### 4.2 `WorkflowPanel`(画布·工作流)
 - **我的工作流**卡片加 **发布到公共** 动作(调 `POST /api/public-workflows`)。
-- **公共工作流** tab:**去掉"点击直接灌进画布编辑"**;改为点击 → 确认弹窗"**复制到我的工作流并编辑?**" → 调 `/api/workflows/fork` → 成功后切到"我的" tab 并加载可编辑副本。卡片展示封面/标题/描述/节点数足以决策。
-  - *(开放项,见 §7)* 是否需要"只读图形预览"——本设计暂不做,留作后续。
+- **公共工作流** tab:**去掉"点击直接灌进画布编辑"**;改为点击 → 打开**只读预览**(见 §4.5)→ 预览内"**复制到我的工作流并编辑**"按钮 → 调 `/api/workflows/fork` → 成功后切到"我的" tab 并加载可编辑副本。
 - 公共工作流面板**无删除按钮**(管理员在 AdminConsole 删)。
+
+### 4.5 `WorkflowPreview`(公共工作流·只读预览,新增组件)
+- **不复用主画布**(主画布表面内联在 `App.tsx`、`CanvasNode` 挂大量交互 props,硬复用代价高)。改为独立轻量只读组件。
+- 渲染:模态内一个 transform 层(按工作流保存的 `viewport` 或 fit-to-content 定位)→ 复用 **`ConnectionsLayer`**(已是 `pointer-events-none`,接收 `nodes/viewport/canvasTheme`)画连线 + **简化节点卡**(缩略图 `resultUrl` + 标题 + 类型徽标),按 `node.x/node.y` 摆位。
+- 交互:**只读**——无拖拽、无改节点、无工具栏;允许只读 pan/zoom(本地 viewport state)便于查看大图。底部一个"复制到我的工作流并编辑"主按钮。
+- 这是本期最重的前端件;数据从 `GET /api/public-workflows/:id` 取完整 `nodes/groups/viewport`。
 
 ### 4.3 `AdminConsole`(管理员后台)
 - 新增 tab **素材库**:全部素材表格/网格,按用户/分类/可见性/关键词筛选;每项可切换公开/下架、删除;复用 P3 范式(`HistoryBrowser` 同款筛选栏 + 卡片)。
@@ -158,11 +167,12 @@
 
 ---
 
-## 7. 开放项(请在评审时拍板)
+## 7. 已定决策(原开放项,2026-06-27 已拍板)
 
-1. **公共工作流只读预览:** 本设计仅"卡片信息 + fork",不做画布内只读图形预览。是否够用?(够 → 维持;不够 → 追加只读画布模式,工作量更大。)
-2. **原作者撤回:** 当前"公共内容仅管理员可删/下架",原作者发布后无法自行撤回。是否给原作者保留"撤回自己发布"的权限?(默认:不给,保持"仅管理员"。)
-3. **收藏时的分类归属:** 从公共"加入我的库"时,默认归到哪个分类?(建议:默认 `Others` 或弹一个轻量分类选择;默认走 `Others`。)
+1. **公共工作流只读预览:做。** 见 §4.5 `WorkflowPreview`。点公共工作流先进只读预览,再 fork。
+2. **原作者撤回:不给。** 公共内容发布后仅管理员可下架/删除。
+3. **收藏默认分类:`Others`。** 见 §3.1 `from-public`。
+4. **(新增)既存素材改分类:做。** 当前素材库只能在创建/导入时定分类,无法事后改;补 `POST /api/library/:id/category` + 素材卡"改分类"下拉(§3.1 / §4.1)。
 
 ---
 
@@ -171,9 +181,9 @@
 > 素材引用模型是地基,先做;再分类个人化;再工作流;最后管理员页。
 
 1. **素材引用化 + 删除护栏**:改 `POST /api/library`(去复制)、`DELETE` 护栏、`isUrlReferencedElsewhere`。
-2. **分类个人化**:categories 三个端点改每用户 + 前端分类来源。
+2. **分类个人化 + 改分类**:categories 三个端点改每用户 + `POST /api/library/:id/category` + 前端分类来源 + 素材卡"改分类"。
 3. **公共素材库**:`publish` / `from-public` 端点 + `AssetLibraryPanel` 我的/公共切换。
-4. **公共工作流**:`publish` / `fork` / 合并列表 + `WorkflowPanel` 改造 + 收敛 `useWorkflow`。
+4. **公共工作流**:`publish` / `fork` / 合并列表 + `WorkflowPreview` 只读预览 + `WorkflowPanel` 改造 + 收敛 `useWorkflow`。
 5. **管理员页**:`/api/admin/assets*` + `/api/admin/public-workflows*` + AdminConsole 新 tab。
 
 每步独立可验证、可提交。
