@@ -410,6 +410,18 @@ router.post('/assets/publish', (req, res) => {
     }
 });
 
+// 读任意用户的工作流原始 JSON(管理员预览用,跨用户)
+router.get('/workflows/:id', (req, res) => {
+    try {
+        const fp = path.join(req.app.locals.LIBRARY_DIR, 'workflows', `${req.params.id}.json`);
+        if (!fs.existsSync(fp)) return res.status(404).json({ error: '工作流不存在' });
+        res.json(JSON.parse(fs.readFileSync(fp, 'utf8')));
+    } catch (e) {
+        console.error('admin get workflow error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // 列用户发布的公共工作流 + ownerName
 router.get('/public-workflows', (req, res) => {
     try {

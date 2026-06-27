@@ -530,9 +530,10 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
             {/* 公共工作流只读预览 → fork 后加载可编辑副本 */}
             {previewId && (
                 <WorkflowPreview
-                    publicId={previewId}
+                    fetchUrl={`/api/public-workflows/${previewId}`}
+                    badge="公共"
                     onClose={() => setPreviewId(null)}
-                    onForked={(newId) => { setPreviewId(null); onLoadWorkflow(newId); }}
+                    fork={{ publicId: previewId, onForked: (newId) => { setPreviewId(null); onLoadWorkflow(newId); } }}
                 />
             )}
         </>

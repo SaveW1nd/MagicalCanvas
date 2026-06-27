@@ -37,10 +37,11 @@ async function apiFetch(url: string, init?: RequestInit) {
 }
 
 export const WorkflowPreview: React.FC<{
-    publicId: string;
+    fetchUrl: string;                                  // GET 返回 { title, nodes } 的端点
     onClose: () => void;
-    onForked: (newWorkflowId: string) => void;
-}> = ({ publicId, onClose, onForked }) => {
+    fork?: { publicId: string; onForked: (newWorkflowId: string) => void }; // 提供则显示「复制到我的工作流」
+    badge?: string;                                    // 头部徽标(如「公共」);不传则不显示
+}> = ({ fetchUrl, onClose, fork, badge }) => {
     const [loading, setLoading] = useState(true);
     const [title, setTitle] = useState('');
     const [nodes, setNodes] = useState<PreviewNode[]>([]);
@@ -52,7 +53,7 @@ export const WorkflowPreview: React.FC<{
     useEffect(() => {
         let alive = true;
         setLoading(true);
-        apiFetch(`/api/public-workflows/${publicId}`)
+        apiFetch(fetchUrl)
             .then(wf => {
                 if (!alive) return;
                 setTitle(wf.title || '未命名');
@@ -61,7 +62,7 @@ export const WorkflowPreview: React.FC<{
             .catch(e => { if (alive) showToast(e instanceof Error ? e.message : '加载失败', 'error'); })
             .finally(() => { if (alive) setLoading(false); });
         return () => { alive = false; };
-    }, [publicId]);
+    }, [fetchUrl]);
 
     // 内容包围盒
     const bbox = useMemo(() => {
@@ -97,14 +98,14 @@ export const WorkflowPreview: React.FC<{
     const onUp = () => { drag.current = null; };
 
     const handleFork = async () => {
-        if (forking) return;
+        if (forking || !fork) return;
         setForking(true);
         try {
             const r = await apiFetch('/api/workflows/fork', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicId }),
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicId: fork.publicId }),
             });
             showToast('已复制到我的工作流', 'success');
-            onForked(r.id);
+            fork.onForked(r.id);
         } catch (e) {
             showToast(e instanceof Error ? e.message : '复制失败', 'error');
         } finally {
@@ -130,7 +131,7 @@ export const WorkflowPreview: React.FC<{
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 h-14 border-b border-neutral-800 shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
-                        <span className="px-1.5 py-0.5 rounded bg-green-600/80 text-white text-[10px]">公共</span>
+                        {badge && <span className="px-1.5 py-0.5 rounded bg-green-600/80 text-white text-[10px]">{badge}</span>}
                         <h2 className="text-white font-medium truncate">{title || '工作流预览'}</h2>
                         <span className="text-neutral-500 text-xs shrink-0">· 只读预览</span>
                     </div>
@@ -199,14 +200,18 @@ export const WorkflowPreview: React.FC<{
                 {/* Footer */}
                 <div className="flex items-center justify-between px-5 h-16 border-t border-neutral-800 shrink-0">
                     <span className="text-xs text-neutral-500">{nodes.length} 个节点 · 滚轮缩放 / 拖拽平移</span>
-                    <button
-                        onClick={handleFork}
-                        disabled={forking || loading}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-colors disabled:opacity-50"
-                    >
-                        {forking ? <Loader2 size={15} className="animate-spin" /> : <GitFork size={15} />}
-                        复制到我的工作流并编辑
-                    </button>
+                    {fork ? (
+                        <button
+                            onClick={handleFork}
+                            disabled={forking || loading}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                        >
+                            {forking ? <Loader2 size={15} className="animate-spin" /> : <GitFork size={15} />}
+                            复制到我的工作流并编辑
+                        </button>
+                    ) : (
+                        <button onClick={onClose} className="px-4 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-sm hover:bg-neutral-800 transition-colors">关闭</button>
+                    )}
                 </div>
             </div>
         </div>

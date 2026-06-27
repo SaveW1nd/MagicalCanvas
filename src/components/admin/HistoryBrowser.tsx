@@ -9,6 +9,8 @@ import { Loader2, Search, RefreshCw, Image as ImageIcon, Film, MessageSquare, La
 import { showToast } from '../Toast';
 import { Select } from '../ui/Select';
 import { Tip } from '../ui/Tip';
+import { ExpandedMediaModal } from '../modals/ExpandedMediaModal';
+import { WorkflowPreview } from '../canvas/WorkflowPreview';
 
 interface HistoryItem {
     id: string;
@@ -73,6 +75,14 @@ export const HistoryBrowser: React.FC = () => {
     const [offset, setOffset] = useState(0);
     const [published, setPublished] = useState<Set<string>>(new Set());
     const [publishingKey, setPublishingKey] = useState<string | null>(null);
+    const [previewMedia, setPreviewMedia] = useState<string | null>(null);
+    const [previewWorkflowId, setPreviewWorkflowId] = useState<string | null>(null);
+
+    // 点卡片预览:图片/视频→放大模态,画布→只读图预览
+    const openPreview = (it: HistoryItem) => {
+        if ((it.type === 'images' || it.type === 'videos') && it.url) setPreviewMedia(mediaUrl(it.url));
+        else if (it.type === 'workflows') setPreviewWorkflowId(it.id);
+    };
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -182,7 +192,10 @@ export const HistoryBrowser: React.FC = () => {
                             <div key={`${it.type}-${it.id}`}
                                 className="group rounded-xl border border-neutral-800 bg-neutral-900/40 overflow-hidden flex flex-col hover:border-neutral-600 transition-colors">
                                 {/* 预览区 */}
-                                <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden">
+                                <div
+                                    className={`relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden ${(it.type === 'images' || it.type === 'videos' || it.type === 'workflows') ? 'cursor-pointer' : ''}`}
+                                    onClick={() => openPreview(it)}
+                                >
                                     {it.type === 'videos' && it.url ? (
                                         <video src={mediaUrl(it.url)} className="w-full h-full object-cover" muted
                                             onMouseEnter={e => { (e.currentTarget as HTMLVideoElement).play().catch(() => {}); }}
@@ -195,7 +208,7 @@ export const HistoryBrowser: React.FC = () => {
                                     <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] text-neutral-200 backdrop-blur-sm">
                                         {tm.icon}{tm.label}
                                     </span>
-                                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                                         {/* 发布到公共(图片/视频→公共素材库;画布→公共工作流) */}
                                         {(it.type === 'images' || it.type === 'videos' || it.type === 'workflows') && (
                                             published.has(itemKey(it)) ? (
@@ -258,6 +271,15 @@ export const HistoryBrowser: React.FC = () => {
                         下一页
                     </button>
                 </div>
+            )}
+
+            {/* 预览:图片/视频放大、画布只读图 */}
+            <ExpandedMediaModal mediaUrl={previewMedia} onClose={() => setPreviewMedia(null)} />
+            {previewWorkflowId && (
+                <WorkflowPreview
+                    fetchUrl={`/api/admin/workflows/${previewWorkflowId}`}
+                    onClose={() => setPreviewWorkflowId(null)}
+                />
             )}
         </div>
     );

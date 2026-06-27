@@ -11,6 +11,8 @@ import { showToast } from '../Toast';
 import { Select } from '../ui/Select';
 import { Tip } from '../ui/Tip';
 import { showAppConfirm } from '../ui/AppDialog';
+import { ExpandedMediaModal } from '../modals/ExpandedMediaModal';
+import { WorkflowPreview } from '../canvas/WorkflowPreview';
 
 interface Asset {
     id: string;
@@ -72,6 +74,8 @@ export const AssetAdmin: React.FC = () => {
 
     const [workflows, setWorkflows] = useState<PublicWorkflow[]>([]);
     const [wfLoading, setWfLoading] = useState(true);
+    const [previewMedia, setPreviewMedia] = useState<string | null>(null);
+    const [previewWorkflowId, setPreviewWorkflowId] = useState<string | null>(null);
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -207,7 +211,8 @@ export const AssetAdmin: React.FC = () => {
                         <div key={a.id}
                             className="group rounded-xl border border-neutral-800 bg-neutral-900/40 overflow-hidden flex flex-col hover:border-neutral-600 transition-colors">
                             {/* 预览区 */}
-                            <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden">
+                            <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden cursor-pointer"
+                                onClick={() => a.url && setPreviewMedia(mediaUrl(a.url))}>
                                 {a.type === 'video' ? (
                                     <video src={mediaUrl(a.url)} className="w-full h-full object-cover" muted
                                         onMouseEnter={e => { (e.currentTarget as HTMLVideoElement).play().catch(() => {}); }}
@@ -220,7 +225,7 @@ export const AssetAdmin: React.FC = () => {
                                     {a.visibility === 'public' ? '公共' : '私有'}
                                 </span>
                                 {/* hover 操作 */}
-                                <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                                     <Tip label={a.visibility === 'public' ? '下架为私有' : '发布到公共'}>
                                         <button onClick={() => toggleVisibility(a)}
                                             className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm">
@@ -271,13 +276,14 @@ export const AssetAdmin: React.FC = () => {
                         {workflows.map(w => (
                             <div key={w.id}
                                 className="group rounded-xl border border-neutral-800 bg-neutral-900/40 overflow-hidden flex flex-col hover:border-neutral-600 transition-colors">
-                                <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden">
+                                <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden cursor-pointer"
+                                    onClick={() => setPreviewWorkflowId(w.id)}>
                                     {w.coverUrl ? (
                                         <img src={mediaUrl(w.coverUrl)} alt="" className="w-full h-full object-cover" loading="lazy" />
                                     ) : (
                                         <div className="text-neutral-700 scale-[1.9]"><LayoutGrid size={13} /></div>
                                     )}
-                                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                                         <Tip label="删除">
                                             <button onClick={() => deleteWorkflow(w)}
                                                 className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-red-400 backdrop-blur-sm">
@@ -298,6 +304,16 @@ export const AssetAdmin: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* 预览:素材放大、公共工作流只读图 */}
+            <ExpandedMediaModal mediaUrl={previewMedia} onClose={() => setPreviewMedia(null)} />
+            {previewWorkflowId && (
+                <WorkflowPreview
+                    fetchUrl={`/api/public-workflows/${previewWorkflowId}`}
+                    badge="公共"
+                    onClose={() => setPreviewWorkflowId(null)}
+                />
+            )}
         </div>
     );
 };
