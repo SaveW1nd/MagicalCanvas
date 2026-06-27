@@ -20,11 +20,11 @@ import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import modelsRoutes from './routes/models.js';
-import { requireAuth } from './auth/middleware.js';
+import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { canAccess } from './auth/ownership.js';
 import { migrateOwnership } from './db/migrate-ownership.js';
-import { seedRegistryFromConfig } from './db/registry.js';
+import { seedRegistryFromConfig, ensureAsrSeed } from './db/registry.js';
 import { userMediaDir, libUrlToPath } from './utils/imageHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -135,7 +135,7 @@ applyConfigToEnv();
 // ============================================================================
 
 // Return current values for all settings keys (localhost desktop app).
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', requireAdmin, (req, res) => {
     try {
         res.json({ success: true, settings: getAllSettings(), keys: SETTINGS_KEYS });
     } catch (error) {
@@ -144,7 +144,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 // Persist updated settings. Takes effect immediately (no restart needed).
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAdmin, (req, res) => {
     try {
         const updates = (req.body && req.body.settings) ? req.body.settings : req.body;
         const merged = saveConfig(updates || {});
@@ -157,7 +157,7 @@ app.post('/api/settings', (req, res) => {
 
 // 测试某一类模型接入是否可用：用解析后的 url+key 调 GET {url}/models 验证连通+鉴权（不消耗额度）。
 // body: { group: 'text'|'image'|'video'|'asr'|'gpt2api' }
-app.post('/api/settings/test', async (req, res) => {
+app.post('/api/settings/test', requireAdmin, async (req, res) => {
     try {
         const group = String((req.body && req.body.group) || 'text').toLowerCase();
         const prefixMap = { text: 'TEXT', vision: 'VISION', image: 'IMAGE', video: 'VIDEO', asr: 'ASR', gpt2api: 'GPT2API' };
@@ -1581,6 +1581,7 @@ try {
     const adminId = bootstrapAdmin();
     migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR, IMAGES_DIR, VIDEOS_DIR, path.join(LIBRARY_DIR, 'prompt-templates')] });
     seedRegistryFromConfig();
+    ensureAsrSeed(); // 已播种过的库也补上 ASR 槽位
 } catch (e) {
     console.error('[auth] bootstrap/migrate failed:', e.message);
 }

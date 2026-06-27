@@ -24,6 +24,7 @@ export interface RegistryModel {
 const CATEGORIES = [
     { key: 'image', label: '图片' }, { key: 'video', label: '视频' },
     { key: 'text', label: '文字 / Agent' }, { key: 'vision', label: '视觉 (看图)' },
+    { key: 'asr', label: '语音识别 (字幕)' },
 ];
 
 async function api(url: string, init?: RequestInit) {

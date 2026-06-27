@@ -20,6 +20,7 @@ import ffmpegStatic from 'ffmpeg-static';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { getKey } from '../config.js';
 import { gpt2apiChat } from '../services/gpt2api.js';
+import { resolveModel } from '../db/registry.js';
 
 const router = express.Router();
 
@@ -473,11 +474,22 @@ router.post('/transcribe', async (req, res) => {
             return res.status(400).json({ error: '没有可识别的音频/视频片段' });
         }
         const { LIBRARY_DIR } = req.app.locals;
-        const baseUrl = (getKey('ASR_API_URL') || getKey('TEXT_API_URL') || '').replace(/\/+$/, '');
-        const apiKey = getKey('ASR_API_KEY') || getKey('TEXT_API_KEY');
-        const model = getKey('ASR_MODEL') || 'whisper-1';
-        if (!baseUrl) return res.status(500).json({ error: '未配置语音识别接口地址，请在「设置 → 语音识别」中填写' });
-        if (!apiKey) return res.status(500).json({ error: '未配置语音识别 KEY，请在「设置 → 语音识别」中填写' });
+        // 优先用模型注册表（管理后台→模型配置）的 ASR 接入点；无则回退旧版按类配置。
+        let baseUrl = '', apiKey = '', model = getKey('ASR_MODEL') || 'whisper-1';
+        try {
+            const hit = resolveModel('asr', null);
+            if (hit && hit.provider.baseUrl && hit.provider.apiKey) {
+                baseUrl = hit.provider.baseUrl.replace(/\/+$/, '');
+                apiKey = hit.provider.apiKey;
+                model = hit.model.modelId || model;
+            }
+        } catch (e) { console.warn('[Registry] ASR resolve failed:', e.message); }
+        if (!baseUrl) {
+            baseUrl = (getKey('ASR_API_URL') || getKey('TEXT_API_URL') || '').replace(/\/+$/, '');
+            apiKey = getKey('ASR_API_KEY') || getKey('TEXT_API_KEY');
+        }
+        if (!baseUrl) return res.status(500).json({ error: '未配置语音识别接口地址，请在「管理后台 → 模型配置 → 语音识别」中填写' });
+        if (!apiKey) return res.status(500).json({ error: '未配置语音识别 KEY，请在「管理后台 → 模型配置 → 语音识别」中填写' });
 
         const out = [];
         let recognizedAny = false;

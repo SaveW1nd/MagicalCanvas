@@ -19,7 +19,7 @@ import crypto from 'crypto';
 import { db } from './index.js';
 import { getKey } from '../config.js';
 
-export const CATEGORIES = ['image', 'video', 'text', 'vision'];
+export const CATEGORIES = ['image', 'video', 'text', 'vision', 'asr'];
 export const PROVIDER_KINDS = ['fp', 'openai']; // fp = Flow gateway, openai = OpenAI-compatible
 
 // ---------------------------------------------------------------------------
@@ -236,6 +236,22 @@ export function seedRegistryFromConfig() {
           capabilities: { supportsVision: true } },
     ];
     for (const m of seed) createModel(m);
+    ensureAsrSeed();
     console.log(`[Registry] Seeded ${listProviders().length} providers + ${listModels().length} models from config.`);
+    return true;
+}
+
+/**
+ * Ensure an ASR (语音识别/智能字幕) model exists. Idempotent — also runs on
+ * already-seeded DBs so the ASR slot appears after upgrade. Seeds with an empty
+ * endpoint (legacy ASR config points at the dead gpt2api gateway); admin fills
+ * in a real Whisper-compatible baseUrl/apiKey.
+ */
+export function ensureAsrSeed() {
+    if (listModelsByCategory('asr').length > 0) return false;
+    const rawUrl = getKey('ASR_API_URL');
+    const baseUrl = rawUrl && !/gpt2api\.com/i.test(rawUrl) ? rawUrl : '';
+    const prov = createProvider({ name: '语音识别 (Whisper)', kind: 'openai', baseUrl, apiKey: baseUrl ? getKey('ASR_API_KEY') : '' });
+    createModel({ modelId: getKey('ASR_MODEL') || 'whisper-1', label: 'Whisper', category: 'asr', providerId: prov.id, isDefault: true, sortOrder: 0, capabilities: {} });
     return true;
 }

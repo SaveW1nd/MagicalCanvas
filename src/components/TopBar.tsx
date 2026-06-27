@@ -51,7 +51,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     const [isSaving, setIsSaving] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showChangePw, setShowChangePw] = useState(false);
-    const { user, logout } = useAuth();
+    const { user, logout, isAdmin } = useAuth();
 
     const handleTitleBlur = () => {
         if (editingTitleValue.trim()) {
@@ -168,16 +168,19 @@ export const TopBar: React.FC<TopBarProps> = ({
                         <Plus size={16} />
                         新建
                     </button>
-                    <button
-                        onClick={() => setShowSettings(true)}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors border ${canvasTheme === 'dark'
-                            ? 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:bg-neutral-800'
-                            : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50 shadow-sm'
-                            }`}
-                        title="设置（API 密钥）"
-                    >
-                        <Settings size={18} />
-                    </button>
+                    {/* 设置（API 密钥/模型）仅管理员可见；普通用户不允许配置，统一在管理后台 */}
+                    {isAdmin && (
+                        <button
+                            onClick={() => setShowSettings(true)}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors border ${canvasTheme === 'dark'
+                                ? 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:bg-neutral-800'
+                                : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50 shadow-sm'
+                                }`}
+                            title="设置（API 密钥）"
+                        >
+                            <Settings size={18} />
+                        </button>
+                    )}
                     <button
                         onClick={onToggleTheme}
                         className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors border ${canvasTheme === 'dark'

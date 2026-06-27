@@ -20,8 +20,8 @@ export interface Provider {
     id: string; name: string; kind: 'fp' | 'openai'; baseUrl: string; hasKey: boolean;
 }
 
-const CATEGORY_LABEL: Record<string, string> = { image: '图片', video: '视频', text: '文字 / Agent', vision: '视觉 (看图)' };
-const CATEGORY_ORDER = ['image', 'video', 'text', 'vision'];
+const CATEGORY_LABEL: Record<string, string> = { image: '图片', video: '视频', text: '文字 / Agent', vision: '视觉 (看图)', asr: '语音识别 (字幕)' };
+const CATEGORY_ORDER = ['image', 'video', 'text', 'vision', 'asr'];
 
 async function api(url: string, init?: RequestInit) {
     const res = await fetch(url, init);
