@@ -1064,6 +1064,7 @@ app.delete('/api/assets/:type/:id', async (req, res) => {
 
         // Read metadata to locate the media + check ownership
         let mediaPath = null;
+        let mediaUrl = null;
         if (fs.existsSync(metaPath)) {
             try {
                 const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -1073,13 +1074,24 @@ app.delete('/api/assets/:type/:id', async (req, res) => {
                 // 新数据用 url 定位(分目录)，旧 flat 数据用 filename
                 mediaPath = metadata.url ? libUrlToPath(LIBRARY_DIR, metadata.url)
                     : (metadata.filename ? path.join(targetDir, metadata.filename) : null);
+                mediaUrl = metadata.url || (metadata.filename ? `/library/${type}/${metadata.filename}` : null);
             } catch (e) {
                 console.warn(`Could not read metadata for ${id}:`, e.message);
             }
         }
 
+        // 护栏:若该媒体已被素材库引用(公开/收藏/保存),只删历史元数据,不删物理文件,避免裂图
+        let referencedByAsset = false;
+        try {
+            const ljp = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+            if (mediaUrl && fs.existsSync(ljp)) {
+                const rows = JSON.parse(fs.readFileSync(ljp, 'utf8'));
+                referencedByAsset = rows.some(a => a.url === mediaUrl);
+            }
+        } catch { /* assets.json 损坏则按未引用处理 */ }
+
         // Delete the media file
-        if (mediaPath && fs.existsSync(mediaPath)) {
+        if (mediaPath && fs.existsSync(mediaPath) && !referencedByAsset) {
             fs.unlinkSync(mediaPath);
             console.log(`Deleted asset file: ${mediaPath}`);
         }
