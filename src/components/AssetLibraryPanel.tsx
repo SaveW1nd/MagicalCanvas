@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput, Globe, Lock, FolderPlus } from 'lucide-react';
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 import { showToast } from './Toast';
+import { Tip } from './ui/Tip';
 
 interface LibraryAsset {
     id: string;
@@ -545,13 +546,14 @@ const AssetLibraryContent = ({
                                 {/* 改分类(我的页·非多选模式) */}
                                 {!manageMode && !isPublicTab && (
                                     <div className="absolute top-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
-                                            onClick={(e) => { e.stopPropagation(); setCategoryMenuId(categoryMenuId === asset.id ? null : asset.id); }}
-                                            title="改分类"
-                                        >
-                                            <FolderInput size={14} />
-                                        </button>
+                                        <Tip label="改分类">
+                                            <button
+                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
+                                                onClick={(e) => { e.stopPropagation(); setCategoryMenuId(categoryMenuId === asset.id ? null : asset.id); }}
+                                            >
+                                                <FolderInput size={14} />
+                                            </button>
+                                        </Tip>
                                         {categoryMenuId === asset.id && (
                                             <div className="absolute top-8 left-0 w-32 max-h-48 overflow-y-auto bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl py-1 z-30">
                                                 {categories.map((cat: string) => (
@@ -572,17 +574,20 @@ const AssetLibraryContent = ({
                                 {isPublicTab && (
                                     <div className="absolute top-1 right-1 z-10" onClick={(e) => e.stopPropagation()}>
                                         {asset.mine ? (
-                                            <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5" title="你发布的素材">
-                                                <Globe size={10} />我发布的
-                                            </span>
+                                            <Tip label="你发布的素材">
+                                                <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5">
+                                                    <Globe size={10} />我发布的
+                                                </span>
+                                            </Tip>
                                         ) : (
-                                            <button
-                                                title="加入我的素材库"
-                                                onClick={(e) => { e.stopPropagation(); onAddFromPublic?.(asset.id); }}
-                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-600/80"
-                                            >
-                                                <FolderPlus size={14} />
-                                            </button>
+                                            <Tip label="加入我的素材库">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onAddFromPublic?.(asset.id); }}
+                                                    className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-600/80"
+                                                >
+                                                    <FolderPlus size={14} />
+                                                </button>
+                                            </Tip>
                                         )}
                                     </div>
                                 )}
@@ -591,34 +596,39 @@ const AssetLibraryContent = ({
                                 {!isPublicTab && !manageMode && deleteConfirmId !== asset.id && (
                                     <div className="absolute top-1 right-1 flex items-center gap-1 z-10" onClick={(e) => e.stopPropagation()}>
                                         {asset.visibility === 'public' ? (
-                                            <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5" title="已发布到公共库，仅管理员可删">
-                                                <Globe size={10} />公共
-                                            </span>
+                                            <Tip label="已发布到公共库，仅管理员可删">
+                                                <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5">
+                                                    <Globe size={10} />公共
+                                                </span>
+                                            </Tip>
                                         ) : !asset.sourceAssetId ? (
-                                            <button
-                                                title="发布到公共库"
-                                                onClick={(e) => { e.stopPropagation(); onPublish?.(asset.id); }}
-                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-600/80"
-                                            >
-                                                <Globe size={14} />
-                                            </button>
+                                            <Tip label="发布到公共库">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onPublish?.(asset.id); }}
+                                                    className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-600/80"
+                                                >
+                                                    <Globe size={14} />
+                                                </button>
+                                            </Tip>
                                         ) : null}
                                         {asset.visibility === 'public' ? (
-                                            <button
-                                                title="已发布到公共库，仅管理员可删"
-                                                onClick={(e) => { e.stopPropagation(); showToast('已发布到公共库，仅管理员可删', 'info'); }}
-                                                className="p-1.5 bg-black/40 text-neutral-500 rounded-md opacity-0 group-hover:opacity-100 cursor-not-allowed hover:text-neutral-300"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <Tip label="已发布到公共库，仅管理员可删">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); showToast('已发布到公共库，仅管理员可删', 'info'); }}
+                                                    className="p-1.5 bg-black/40 text-neutral-500 rounded-md opacity-0 group-hover:opacity-100 cursor-not-allowed hover:text-neutral-300"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </Tip>
                                         ) : (
-                                            <button
-                                                title="删除素材"
-                                                onClick={(e) => handleDeleteClick(e, asset.id)}
-                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <Tip label="删除素材">
+                                                <button
+                                                    onClick={(e) => handleDeleteClick(e, asset.id)}
+                                                    className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </Tip>
                                         )}
                                     </div>
                                 )}
