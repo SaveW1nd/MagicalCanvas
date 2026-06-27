@@ -62,7 +62,7 @@ export const ProviderModal: React.FC<{
                 className="w-full max-w-md bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
                 <div className="flex items-center justify-between">
                     <h3 className="text-base font-semibold text-white">{editing ? '编辑接入点' : '新建接入点'}</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <button type="button" onClick={close} title="关闭" className="text-neutral-500 hover:text-white"><X size={18} /></button>
                 </div>
                 <Field label="名称">
                     <input value={name} onChange={e => setName(e.target.value)} autoFocus placeholder="如 DeepSeek / Flow"

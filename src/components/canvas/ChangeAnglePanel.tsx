@@ -95,6 +95,7 @@ export const ChangeAnglePanel: React.FC<ChangeAnglePanelProps> = ({
                     <button
                         onClick={onClose}
                         className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-700 text-neutral-400 hover:text-white' : 'hover:bg-neutral-100 text-neutral-500 hover:text-neutral-900'}`}
+                        title="关闭"
                     >
                         <X size={18} />
                     </button>

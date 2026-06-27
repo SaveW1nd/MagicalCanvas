@@ -35,6 +35,7 @@ export const NodeConnectors: React.FC<NodeConnectorsProps> = ({
                     onConnectorDown(e, nodeId, 'left');
                 }}
                 className={`-left-12 top-1/2 -translate-y-1/2 ${buttonClassName}`}
+                title="连接 / 新建节点"
             >
                 <Plus size={18} />
             </button>
@@ -46,6 +47,7 @@ export const NodeConnectors: React.FC<NodeConnectorsProps> = ({
                     onConnectorDown(e, nodeId, 'right');
                 }}
                 className={`-right-12 top-1/2 -translate-y-1/2 ${buttonClassName}`}
+                title="连接 / 新建节点"
             >
                 <Plus size={18} />
             </button>

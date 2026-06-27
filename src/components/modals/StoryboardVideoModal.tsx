@@ -321,6 +321,7 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
                     </div>
                     <button
                         onClick={onClose}
+                        title="关闭"
                         className="p-2 hover:bg-neutral-800 rounded-lg transition-colors text-neutral-500 hover:text-white"
                     >
                         <X size={20} />

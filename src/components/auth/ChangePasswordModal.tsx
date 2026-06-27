@@ -50,7 +50,7 @@ export const ChangePasswordModal: React.FC<{ isOpen: boolean; onClose: () => voi
             >
                 <div className="flex items-center justify-between mb-1">
                     <h3 className="text-base font-semibold text-white">修改密码</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <button type="button" onClick={close} title="关闭" className="text-neutral-500 hover:text-white"><X size={18} /></button>
                 </div>
                 <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="当前密码"
                     className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 outline-none focus:border-blue-500/60" required />

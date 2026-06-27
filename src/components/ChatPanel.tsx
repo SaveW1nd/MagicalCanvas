@@ -274,6 +274,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     <div className={`flex items-center gap-3 px-4 py-3 border-b ${isDark ? 'border-neutral-800' : 'border-neutral-200'}`}>
                         <button
                             onClick={() => setShowHistory(false)}
+                            title="返回"
                             className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-800 text-neutral-400 hover:text-white' : 'hover:bg-neutral-100 text-neutral-500 hover:text-neutral-900'}`}
                         >
                             <ChevronLeft size={18} />
@@ -368,6 +369,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     </button>
                     <button
                         onClick={onClose}
+                        title="关闭"
                         className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-800 text-neutral-400 hover:text-white' : 'hover:bg-neutral-100 text-neutral-500 hover:text-neutral-900'}`}
                     >
                         <X size={18} />
@@ -517,6 +519,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             <button
                                 onClick={handleSend}
                                 disabled={isLoading || (!message.trim() && !attachedMedia)}
+                                title="发送"
                                 className={`p-2 rounded-full transition-colors text-white ${isLoading || (!message.trim() && !attachedMedia)
                                     ? 'bg-neutral-600 cursor-not-allowed'
                                     : 'bg-cyan-500 hover:bg-cyan-400'

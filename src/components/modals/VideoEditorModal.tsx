@@ -198,6 +198,7 @@ export const VideoEditorModal: React.FC<VideoEditorModalProps> = ({
                 <h2 className="text-lg font-semibold text-white">视频编辑器</h2>
                 <button
                     onClick={onClose}
+                    title="关闭"
                     className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                 >
                     <X size={20} />
@@ -241,18 +242,21 @@ export const VideoEditorModal: React.FC<VideoEditorModalProps> = ({
                         <div className="flex items-center justify-center gap-4">
                             <button
                                 onClick={jumpToStart}
+                                title="跳到起点"
                                 className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                             >
                                 <SkipBack size={20} />
                             </button>
                             <button
                                 onClick={togglePlayPause}
+                                title="播放/暂停"
                                 className="p-3 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-colors"
                             >
                                 {isPlaying ? <Pause size={24} /> : <Play size={24} className="ml-0.5" />}
                             </button>
                             <button
                                 onClick={jumpToEnd}
+                                title="跳到终点"
                                 className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                             >
                                 <SkipForward size={20} />

@@ -159,6 +159,7 @@ export const ExpandedMediaModal: React.FC<ExpandedMediaModalProps> = ({
             <button
                 className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors z-10"
                 onClick={onClose}
+                title="关闭"
             >
                 <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M6 18L18 6M6 6l12 12" />
@@ -170,6 +171,7 @@ export const ExpandedMediaModal: React.FC<ExpandedMediaModalProps> = ({
                 <button
                     className="p-1 text-white/80 hover:text-white transition-colors"
                     onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.max(MIN_ZOOM, prev - ZOOM_STEP)); }}
+                    title="缩小"
                 >
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M5 12h14" />
@@ -181,6 +183,7 @@ export const ExpandedMediaModal: React.FC<ExpandedMediaModalProps> = ({
                 <button
                     className="p-1 text-white/80 hover:text-white transition-colors"
                     onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.min(MAX_ZOOM, prev + ZOOM_STEP)); }}
+                    title="放大"
                 >
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 5v14M5 12h14" />

@@ -247,6 +247,7 @@ export const StoryboardGeneratorModal: React.FC<StoryboardGeneratorModalProps> =
                     </div>
                     <button
                         onClick={onClose}
+                        title="关闭"
                         className="p-2 hover:bg-neutral-800/80 rounded-lg transition-all duration-200 group"
                     >
                         <X size={18} className="text-neutral-500 group-hover:text-neutral-300 transition-colors" />

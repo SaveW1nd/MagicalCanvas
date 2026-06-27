@@ -34,7 +34,7 @@ export const SetPasswordModal: React.FC<{
                 className="w-full max-w-sm bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                     <h3 className="text-base font-semibold text-white">设置「{username}」的密码</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <button type="button" onClick={close} title="关闭" className="text-neutral-500 hover:text-white"><X size={18} /></button>
                 </div>
                 <input type="text" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="留空 = 默认 12345678"
                     className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 outline-none focus:border-blue-500/60" />

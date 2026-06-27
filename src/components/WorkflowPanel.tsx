@@ -265,6 +265,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                         </button>
                         <button
                             onClick={onClose}
+                            title="关闭"
                             className={`transition-colors ${isDark ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-neutral-900'}`}
                         >
                             <Maximize2 size={18} />
@@ -434,6 +435,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                             <h3 className="text-lg font-semibold text-white">选择封面图像</h3>
                             <button
                                 onClick={() => setEditingCoverFor(null)}
+                                title="关闭"
                                 className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-400 hover:text-white transition-colors"
                             >
                                 <X size={18} />

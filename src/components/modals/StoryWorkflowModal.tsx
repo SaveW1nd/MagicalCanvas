@@ -307,7 +307,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                             <p className="text-[11px] text-neutral-500">四段式 AI 流水线：小说 → 节拍剧本 → 人物/场景/道具 → 分镜 → 解说旁白</p>
                         </div>
                     </div>
-                    <button onClick={onClose} disabled={loading} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40">
+                    <button onClick={onClose} disabled={loading} title="关闭" className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40">
                         <X size={16} />
                     </button>
                 </div>

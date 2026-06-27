@@ -150,7 +150,7 @@ export const ModelModal: React.FC<{
                 className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
                 <div className="flex items-center justify-between">
                     <h3 className="text-base font-semibold text-white">{editing ? '编辑模型' : '添加模型'}</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <button type="button" onClick={close} title="关闭" className="text-neutral-500 hover:text-white"><X size={18} /></button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
