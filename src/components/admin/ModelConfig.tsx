@@ -148,21 +148,27 @@ export const ModelConfig: React.FC = () => {
                                     className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"><Plus size={13} /> 添加模型</button>
                             </div>
                             <div className="rounded-xl border border-neutral-800 overflow-hidden">
-                                <table className="w-full text-sm">
+                                <table className="w-full text-sm table-fixed">
+                                    <colgroup>
+                                        <col className="w-12" />
+                                        <col />
+                                        <col className="w-48" />
+                                        <col className="w-32" />
+                                    </colgroup>
                                     <tbody>
                                         {list.map(m => (
                                             <tr key={m.id} className={`border-b border-neutral-800 last:border-0 ${m.enabled ? 'text-neutral-200' : 'text-neutral-600'}`}>
-                                                <td className="px-4 py-2.5 w-8">
+                                                <td className="pl-4 pr-1 py-2.5">
                                                     <Tip label={m.isDefault ? '默认模型' : '设为默认'}>
                                                         <button onClick={() => setDefault(m)} className={m.isDefault ? 'text-amber-400' : 'text-neutral-600 hover:text-neutral-300'}><Star size={15} fill={m.isDefault ? 'currentColor' : 'none'} /></button>
                                                     </Tip>
                                                 </td>
                                                 <td className="px-2 py-2.5">
-                                                    <div className="font-medium flex items-center gap-2">{m.label}{m.capabilities?.recommended && <span className="text-[10px] text-green-400 border border-green-700/50 rounded px-1">推荐</span>}</div>
-                                                    <div className="text-[11px] text-neutral-500 font-mono">{m.modelId}</div>
+                                                    <div className="font-medium flex items-center gap-2 truncate">{m.label}{m.capabilities?.recommended && <span className="shrink-0 text-[10px] text-green-400 border border-green-700/50 rounded px-1">推荐</span>}</div>
+                                                    <div className="text-[11px] text-neutral-500 font-mono truncate">{m.modelId}</div>
                                                 </td>
-                                                <td className="px-2 py-2.5 text-[12px] text-neutral-400">{providerName(m.providerId)}</td>
-                                                <td className="px-2 py-2.5 text-right">
+                                                <td className="px-2 py-2.5 text-[12px] text-neutral-400 truncate">{providerName(m.providerId)}</td>
+                                                <td className="px-2 py-2.5">
                                                     <div className="flex items-center justify-end gap-1.5">
                                                         <Tip label={m.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}>
                                                             <button onClick={() => toggleEnabled(m)} className={m.enabled ? 'text-green-400' : 'text-neutral-600 hover:text-neutral-300'}>{m.enabled ? <CheckCircle2 size={16} /> : <Circle size={16} />}</button>
@@ -173,7 +179,7 @@ export const ModelConfig: React.FC = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {!list.length && <tr><td className="px-4 py-4 text-center text-neutral-500 text-xs">暂无模型</td></tr>}
+                                        {!list.length && <tr><td colSpan={4} className="px-4 py-4 text-center text-neutral-500 text-xs">暂无模型</td></tr>}
                                     </tbody>
                                 </table>
                             </div>
