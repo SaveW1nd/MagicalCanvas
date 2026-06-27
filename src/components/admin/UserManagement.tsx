@@ -26,7 +26,6 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     // create form
-    const [email, setEmail] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<'user' | 'admin'>('user');
@@ -46,11 +45,12 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
         if (creating) return;
         setCreating(true); setError(null);
         try {
-            await adminFetch('/api/admin/users', {
+            const r = await adminFetch('/api/admin/users', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: email.trim(), username: username.trim(), password, role }),
+                body: JSON.stringify({ username: username.trim(), password, role }),
             });
-            setEmail(''); setUsername(''); setPassword(''); setRole('user');
+            if (r.defaultPassword) window.alert(`已创建用户「${username.trim()}」，初始密码：${r.defaultPassword}`);
+            setUsername(''); setPassword(''); setRole('user');
             await load();
         } catch (e) { setError(e instanceof Error ? e.message : '创建失败'); }
         finally { setCreating(false); }
@@ -90,19 +90,14 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
             {/* Create */}
             <form onSubmit={create} className="flex flex-wrap items-end gap-2 mb-5 p-3 rounded-xl bg-neutral-900 border border-neutral-800">
                 <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-500">邮箱</span>
-                    <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="user@local"
+                    <span className="text-[11px] text-neutral-500">用户名</span>
+                    <input required value={username} onChange={e => setUsername(e.target.value)} placeholder="登录用户名"
                         className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-48" />
                 </div>
                 <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-500">用户名</span>
-                    <input value={username} onChange={e => setUsername(e.target.value)} placeholder="（可选）"
-                        className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-32" />
-                </div>
-                <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-500">密码(≥8)</span>
-                    <input type="text" required value={password} onChange={e => setPassword(e.target.value)} placeholder="初始密码"
-                        className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-36" />
+                    <span className="text-[11px] text-neutral-500">密码</span>
+                    <input type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="留空=默认 12345678"
+                        className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-44" />
                 </div>
                 <div className="flex flex-col gap-1">
                     <span className="text-[11px] text-neutral-500">角色</span>
@@ -139,8 +134,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                             {users.map(u => (
                                 <tr key={u.id} className="border-t border-neutral-800 text-neutral-200">
                                     <td className="px-3 py-2">
-                                        <div className="font-medium">{u.username || u.email.split('@')[0]}{u.id === currentUserId && <span className="ml-1 text-[10px] text-blue-400">(我)</span>}</div>
-                                        <div className="text-[11px] text-neutral-500">{u.email}</div>
+                                        <div className="font-medium">{u.username}{u.id === currentUserId && <span className="ml-1 text-[10px] text-blue-400">(我)</span>}</div>
                                     </td>
                                     <td className="px-3 py-2">
                                         <span className={u.role === 'admin' ? 'text-amber-400' : 'text-neutral-400'}>{u.role === 'admin' ? '管理员' : '普通用户'}</span>

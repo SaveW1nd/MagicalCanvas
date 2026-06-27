@@ -41,6 +41,7 @@ db.exec(`
         lastLoginAt  TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
     -- JWT logout denylist (jti -> expiry epoch seconds)
     CREATE TABLE IF NOT EXISTS token_denylist (
         jti TEXT PRIMARY KEY,
@@ -72,6 +73,7 @@ const _insertUser = db.prepare(`
     VALUES(@id, @email, @username, @passwordHash, @role, @status, @createdAt, @updatedAt)
 `);
 const _userByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
+const _userByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
 const _userById = db.prepare('SELECT * FROM users WHERE id = ?');
 const _allUsers = db.prepare('SELECT * FROM users ORDER BY createdAt ASC');
 const _countUsers = db.prepare('SELECT COUNT(*) AS n FROM users');
@@ -86,16 +88,20 @@ export function publicUser(u) {
 
 export function countUsers() { return _countUsers.get().n; }
 export function getUserByEmail(email) { return _userByEmail.get(String(email || '').trim().toLowerCase()); }
+export function getUserByUsername(username) { return _userByUsername.get(String(username || '').trim()); }
 export function getUserById(id) { return _userById.get(id); }
 export function listUsers() { return _allUsers.all().map(publicUser); }
 
 export function createUser({ email, username, passwordHash, role = 'user', status = 'active' }) {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
+    // 登录用 username（唯一）；email 可选，缺省按用户名生成占位以满足非空唯一约束
+    const uname = String(username || '').trim() || String(email || '').split('@')[0];
+    const mail = String(email || '').trim().toLowerCase() || `${uname.toLowerCase()}@local`;
     const rec = {
         id,
-        email: String(email).trim().toLowerCase(),
-        username: username || String(email).split('@')[0],
+        email: mail,
+        username: uname,
         passwordHash,
         role,
         status,

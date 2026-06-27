@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export const LoginPage: React.FC = () => {
     const { login } = useAuth();
-    const [email, setEmail] = useState('');
+    const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -18,7 +18,7 @@ export const LoginPage: React.FC = () => {
         setError(null);
         setBusy(true);
         try {
-            await login(email.trim(), password);
+            await login(username.trim(), password);
         } catch (err) {
             setError(err instanceof Error ? err.message : '登录失败');
         } finally {
@@ -39,14 +39,14 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 <label className="flex flex-col gap-1">
-                    <span className="text-xs text-neutral-400">邮箱</span>
+                    <span className="text-xs text-neutral-400">用户名</span>
                     <input
-                        type="email"
+                        type="text"
                         autoFocus
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
                         className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500/60"
-                        placeholder="you@example.com"
+                        placeholder="用户名"
                         required
                     />
                 </label>

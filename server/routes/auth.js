@@ -7,7 +7,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import {
-    getUserByEmail, getUserById, createUser, recordLogin, denylistToken, publicUser, updateUser,
+    getUserByUsername, getUserById, createUser, recordLogin, denylistToken, publicUser, updateUser,
 } from '../db/index.js';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../auth/tokens.js';
@@ -33,13 +33,13 @@ function issue(user) {
     };
 }
 
-// POST /api/auth/login  { email, password }
+// POST /api/auth/login  { username, password }
 router.post('/login', loginLimiter, (req, res) => {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: '请输入邮箱和密码' });
-    const user = getUserByEmail(email);
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
+    const user = getUserByUsername(username);
     if (!user || !verifyPassword(password, user.passwordHash)) {
-        return res.status(401).json({ error: '邮箱或密码错误' });
+        return res.status(401).json({ error: '用户名或密码错误' });
     }
     if (user.status !== 'active') return res.status(403).json({ error: '账号已被禁用' });
     recordLogin(user.id);
@@ -83,11 +83,11 @@ router.post('/change-password', requireAuth, (req, res) => {
 // POST /api/auth/register  { email, password, username } — gated by ALLOW_SELF_REGISTER
 router.post('/register', (req, res) => {
     if (!ALLOW_SELF_REGISTER) return res.status(403).json({ error: '本站不开放自助注册，请联系管理员开通账号' });
-    const { email, password, username } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: '请输入邮箱和密码' });
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
     if (String(password).length < 8) return res.status(400).json({ error: '密码至少 8 位' });
-    if (getUserByEmail(email)) return res.status(409).json({ error: '该邮箱已注册' });
-    const user = createUser({ email, username, passwordHash: hashPassword(password), role: 'user' });
+    if (getUserByUsername(username)) return res.status(409).json({ error: '该用户名已存在' });
+    const user = createUser({ username, passwordHash: hashPassword(password), role: 'user' });
     res.status(201).json(issue(user));
 });
 

@@ -9,7 +9,7 @@
  * P1 migration uses as the owner of all pre-existing single-user data.
  */
 import crypto from 'crypto';
-import { countUsers, createUser, getUserByEmail, listUsers } from '../db/index.js';
+import { countUsers, createUser, getUserByUsername, listUsers } from '../db/index.js';
 import { hashPassword } from './passwords.js';
 
 export function bootstrapAdmin() {
@@ -18,15 +18,14 @@ export function bootstrapAdmin() {
         return admin ? admin.id : null;
     }
 
-    const email = (process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@local').trim().toLowerCase();
+    const username = (process.env.BOOTSTRAP_ADMIN_USERNAME || process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin').trim().split('@')[0];
     let password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
     let generated = false;
     if (!password) { password = crypto.randomBytes(9).toString('base64url'); generated = true; }
 
-    const existing = getUserByEmail(email);
+    const existing = getUserByUsername(username);
     const admin = existing || createUser({
-        email,
-        username: 'admin',
+        username,
         passwordHash: hashPassword(password),
         role: 'admin',
         status: 'active',
@@ -34,7 +33,7 @@ export function bootstrapAdmin() {
 
     console.log('\n========================================================');
     console.log(' [MagicalCanvas] 初始管理员已创建');
-    console.log(`   邮箱: ${email}`);
+    console.log(`   用户名: ${username}`);
     if (generated) {
         console.log(`   密码(随机生成，请立即登录后修改): ${password}`);
     } else {

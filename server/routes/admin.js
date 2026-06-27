@@ -6,9 +6,11 @@
  */
 import express from 'express';
 import {
-    listUsers, getUserById, getUserByEmail, createUser, updateUser, deleteUser,
+    listUsers, getUserById, getUserByUsername, createUser, updateUser, deleteUser,
     countActiveAdmins, publicUser,
 } from '../db/index.js';
+
+const DEFAULT_PASSWORD = '12345678';
 import { hashPassword } from '../auth/passwords.js';
 import { requireAdmin } from '../auth/middleware.js';
 
@@ -21,16 +23,18 @@ router.get('/users', (_req, res) => {
 });
 
 router.post('/users', (req, res) => {
-    const { email, username, password, role } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: '请输入邮箱和密码' });
-    if (String(password).length < 8) return res.status(400).json({ error: '密码至少 8 位' });
-    if (getUserByEmail(email)) return res.status(409).json({ error: '该邮箱已存在' });
+    const { username, password, role } = req.body || {};
+    if (!username || !String(username).trim()) return res.status(400).json({ error: '请输入用户名' });
+    // 密码留空 → 用默认密码 12345678；若填了则至少 8 位
+    if (password && String(password).length < 8) return res.status(400).json({ error: '密码至少 8 位' });
+    const pw = password && String(password) ? String(password) : DEFAULT_PASSWORD;
+    if (getUserByUsername(username)) return res.status(409).json({ error: '该用户名已存在' });
     const u = createUser({
-        email, username,
-        passwordHash: hashPassword(password),
+        username: String(username).trim(),
+        passwordHash: hashPassword(pw),
         role: role === 'admin' ? 'admin' : 'user',
     });
-    res.status(201).json({ user: publicUser(u) });
+    res.status(201).json({ user: publicUser(u), defaultPassword: password ? undefined : DEFAULT_PASSWORD });
 });
 
 router.put('/users/:id', (req, res) => {

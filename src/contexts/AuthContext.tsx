@@ -9,7 +9,7 @@ import { installAuthFetch, setTokens, clearTokens, getAccessToken } from '../uti
 
 export interface AuthUser {
     id: string;
-    email: string;
+    email?: string;
     username: string;
     role: 'admin' | 'user';
     status: string;
@@ -19,7 +19,7 @@ interface AuthContextValue {
     user: AuthUser | null;
     isAdmin: boolean;
     loading: boolean;
-    login: (email: string, password: string) => Promise<void>;
+    login: (username: string, password: string) => Promise<void>;
     logout: () => Promise<void>;
 }
 
@@ -63,11 +63,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return () => { cancelled = true; };
     }, []);
 
-    const login = useCallback(async (email: string, password: string) => {
+    const login = useCallback(async (username: string, password: string) => {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ username, password }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '登录失败');
