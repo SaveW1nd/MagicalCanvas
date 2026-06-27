@@ -332,125 +332,88 @@ app.use('/api/prompt-templates', promptTemplatesRoutes);
 
 // --- Library Assets API ---
 
+/**
+ * assets.json 中是否还有别的素材行(排除 excludeId)指向同一个 url。
+ * 物理删除护栏:被他人/公开/收藏引用的文件不得 unlink。
+ */
+function assetUrlReferencedElsewhere(libraryData, url, excludeId) {
+    if (!url) return false;
+    return libraryData.some(a => a.id !== excludeId && a.url === url);
+}
+
 // Save curated asset to library
 app.post('/api/library', async (req, res) => {
     try {
         const { sourceUrl, name, category, meta } = req.body;
-
         if (!sourceUrl || !name || !category) {
             return res.status(400).json({ error: "Missing required fields" });
         }
 
-        // Determine destination directory
-        const destDir = path.join(LIBRARY_DIR, 'users', req.user.id, 'assets', category);
-        if (!fs.existsSync(destDir)) {
-            fs.mkdirSync(destDir, { recursive: true });
-        }
-
-        // Sanitize name for filesystem
         const safeName = name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        let url;        // 素材最终指向的 /library/... 路径
+        let assetType;  // 'image' | 'video'
 
-        let destFilename;
-        let destPath;
-
-        // HANDLE DATA URL (Base64)
         if (sourceUrl.startsWith('data:')) {
+            // 真·新字节(本地上传/base64)→ 一次性落盘到本人 assets 目录。
+            // 这是该文件的唯一一份,不是"备份"。
             const matches = sourceUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
             if (!matches || matches.length !== 3) {
                 return res.status(400).json({ error: 'Invalid data URL format' });
             }
-
             const mimeType = matches[1];
-            const base64Data = matches[2];
-            const buffer = Buffer.from(base64Data, 'base64');
-
-            // Determine extension from mime
+            const buffer = Buffer.from(matches[2], 'base64');
             const mimeExt = {
                 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
                 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
             };
             const ext = mimeExt[mimeType] || (mimeType.startsWith('video/') ? '.mp4' : '.png');
-
-            destFilename = `${safeName}${ext}`;
-            destPath = path.join(destDir, destFilename);
-            // 避免清洗后的同名文件互相覆盖（如中文文件名都变成下划线）
+            const destDir = path.join(LIBRARY_DIR, 'users', req.user.id, 'assets', category);
+            fs.mkdirSync(destDir, { recursive: true });
+            let destFilename = `${safeName}${ext}`;
+            let destPath = path.join(destDir, destFilename);
             while (fs.existsSync(destPath)) {
                 destFilename = `${safeName}_${Date.now()}${ext}`;
                 destPath = path.join(destDir, destFilename);
             }
-
             fs.writeFileSync(destPath, buffer);
-        }
-        // HANDLE FILE PATH OR URL
-        else {
-            // Determine source file path
-            let sourcePath = null;
-
-            // Normalize URL: remove origin if present to get just the path
+            url = `/library/users/${req.user.id}/assets/${category}/${destFilename}`;
+            assetType = mimeType.startsWith('video/') ? 'video' : 'image';
+        } else {
+            // 已在服务器上的文件(生成结果/已有素材)→ 只引用,绝不复制。
             let cleanUrl = sourceUrl;
-            try {
-                // If it's a full URL, extract pathname
-                if (sourceUrl.startsWith('http')) {
-                    const u = new URL(sourceUrl);
-                    cleanUrl = u.pathname;
-                }
-            } catch (e) {
-                // Not a valid URL, treat as path
-            }
-
-            // Always strip query string (cache busting params like ?t=123)
-            cleanUrl = cleanUrl.split('?')[0];
-
-            // Ensure cleanUrl starts with / if it doesn't (though URL.pathname does)
+            try { if (sourceUrl.startsWith('http')) cleanUrl = new URL(sourceUrl).pathname; } catch { /* not a URL */ }
+            cleanUrl = decodeURIComponent(cleanUrl.split('?')[0]);
             if (!cleanUrl.startsWith('/')) cleanUrl = '/' + cleanUrl;
-
-            // Handle URL decoding (e.g. %20 -> space)
-            cleanUrl = decodeURIComponent(cleanUrl);
-
-            if (cleanUrl.startsWith('/library/images/')) {
-                sourcePath = path.join(IMAGES_DIR, cleanUrl.replace('/library/images/', ''));
-            } else if (cleanUrl.startsWith('/library/videos/')) {
-                sourcePath = path.join(VIDEOS_DIR, cleanUrl.replace('/library/videos/', ''));
-            } else if (cleanUrl.startsWith('/assets/images/')) { // Legacy support
-                sourcePath = path.join(IMAGES_DIR, cleanUrl.replace('/assets/images/', ''));
-            } else if (cleanUrl.startsWith('/assets/videos/')) { // Legacy support
-                sourcePath = path.join(VIDEOS_DIR, cleanUrl.replace('/assets/videos/', ''));
+            // 兼容旧 /assets/ 前缀
+            if (cleanUrl.startsWith('/assets/images/')) cleanUrl = cleanUrl.replace('/assets/images/', '/library/images/');
+            if (cleanUrl.startsWith('/assets/videos/')) cleanUrl = cleanUrl.replace('/assets/videos/', '/library/videos/');
+            const onDisk = libUrlToPath(LIBRARY_DIR, cleanUrl);
+            if (!onDisk || !fs.existsSync(onDisk)) {
+                return res.status(404).json({ error: "Source file not found", debug: { sourceUrl, cleanUrl } });
             }
-
-            if (!sourcePath || !fs.existsSync(sourcePath)) {
-                console.error(`Save asset failed: Source file not found. URL: ${sourceUrl}, Path: ${sourcePath}`);
-                return res.status(404).json({ error: "Source file not found", debug: { sourceUrl, sourcePath, cleanUrl } });
-            }
-
-            // Copy file
-            const ext = path.extname(sourcePath);
-            destFilename = `${safeName}${ext}`;
-            destPath = path.join(destDir, destFilename);
-
-            fs.copyFileSync(sourcePath, destPath);
+            url = cleanUrl; // 指针,零拷贝
+            assetType = /\.(mp4|webm|mov)$/i.test(cleanUrl) ? 'video' : 'image';
         }
 
-        // Update assets.json
         const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
         let libraryData = [];
         if (fs.existsSync(libraryJsonPath)) {
             libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
         }
-
         const newEntry = {
             id: crypto.randomUUID(),
             ownerId: req.user.id,
-            name: name,
-            category: category,
-            url: `/library/users/${req.user.id}/assets/${category}/${destFilename}`,
-            type: sourceUrl.includes('video') || (sourceUrl.startsWith('data:video')) ? 'video' : 'image',
+            name,
+            category,
+            url,
+            type: assetType,
+            visibility: 'private',
+            sourceAssetId: null,
             createdAt: new Date().toISOString(),
-            ...meta
+            ...meta,
         };
-
         libraryData.push(newEntry);
         fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
-
         res.json({ success: true, asset: newEntry });
     } catch (error) {
         console.error("Save to library error:", error);
