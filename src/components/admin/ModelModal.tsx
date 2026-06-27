@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, X, DownloadCloud } from 'lucide-react';
 import { showToast } from '../Toast';
+import { Select } from '../ui/Select';
 import type { Provider } from './ModelConfig';
 
 export interface RegistryModel {
@@ -146,23 +147,18 @@ export const ModelModal: React.FC<{
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[130] p-4" onClick={close}>
             <form onClick={e => e.stopPropagation()} onSubmit={submit}
-                className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
+                className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white dark:bg-[#1a1a1a] border border-neutral-300 dark:border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-base font-semibold text-white">{editing ? '编辑模型' : '添加模型'}</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <h3 className="text-base font-semibold text-neutral-900 dark:text-white">{editing ? '编辑模型' : '添加模型'}</h3>
+                    <button type="button" onClick={close} className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-900 dark:hover:text-white"><X size={18} /></button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                     <Field label="类别">
-                        <select value={category} onChange={e => setCategory(e.target.value)} className={inputCls}>
-                            {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                        </select>
+                        <Select value={category} onChange={setCategory} options={CATEGORIES.map(c => ({ value: c.key, label: c.label }))} />
                     </Field>
                     <Field label="接入点">
-                        <select value={providerId} onChange={e => setProviderId(e.target.value)} className={inputCls}>
-                            {!providers.length && <option value="">（请先建接入点）</option>}
-                            {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
+                        <Select value={providerId} onChange={setProviderId} options={providers.length ? providers.map(p => ({ value: p.id, label: p.name })) : [{ value: '', label: '（请先建接入点）' }]} />
                     </Field>
                 </div>
 
@@ -171,7 +167,7 @@ export const ModelModal: React.FC<{
                         <input value={modelId} onChange={e => setModelId(e.target.value)} list="upstream-models" placeholder="如 deepseek-v4-pro"
                             className={`${inputCls} font-mono flex-1`} />
                         <button type="button" onClick={fetchUpstream} disabled={fetching}
-                            className="shrink-0 flex items-center gap-1 px-2.5 rounded-lg text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-50">
+                            className="shrink-0 flex items-center gap-1 px-2.5 rounded-lg text-xs bg-neutral-200 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 disabled:opacity-50">
                             {fetching ? <Loader2 size={13} className="animate-spin" /> : <DownloadCloud size={13} />} 拉取上游
                         </button>
                     </div>
@@ -220,7 +216,7 @@ export const ModelModal: React.FC<{
                 )}
 
                 <div className="flex justify-end gap-2 mt-1">
-                    <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50">取消</button>
+                    <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-200 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-900 dark:text-white disabled:opacity-50">取消</button>
                     <button type="submit" disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 disabled:opacity-50">
                         {busy && <Loader2 size={14} className="animate-spin" />}{editing ? '保存' : '添加'}
                     </button>
@@ -230,22 +226,22 @@ export const ModelModal: React.FC<{
     );
 };
 
-const inputCls = 'w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 outline-none focus:border-blue-500/60';
+const inputCls = 'w-full bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500/60';
 
 const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-    <label className="flex flex-col gap-1"><span className="text-[11px] text-neutral-500">{label}</span>{children}</label>
+    <label className="flex flex-col gap-1"><span className="text-[11px] text-neutral-400 dark:text-neutral-500">{label}</span>{children}</label>
 );
 const CsvField: React.FC<{ label: string; value: string; onChange: (v: string) => void; placeholder?: string }> = ({ label, value, onChange, placeholder }) => (
     <Field label={label}><input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className={inputCls} /></Field>
 );
 const Check: React.FC<{ label: string; checked: boolean; onChange: (v: boolean) => void }> = ({ label, checked, onChange }) => (
-    <label className="flex items-center gap-1.5 text-sm text-neutral-300 cursor-pointer select-none">
+    <label className="flex items-center gap-1.5 text-sm text-neutral-700 dark:text-neutral-300 cursor-pointer select-none">
         <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="accent-blue-500" />{label}
     </label>
 );
 const CapBox: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3 flex flex-col gap-2.5">
-        <div className="text-[11px] font-medium text-neutral-400">{title}</div>
+    <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/40 p-3 flex flex-col gap-2.5">
+        <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">{title}</div>
         <div className="flex flex-wrap gap-x-5 gap-y-2">{children}</div>
     </div>
 );

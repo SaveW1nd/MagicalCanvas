@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 import { showToast } from '../Toast';
+import { Select } from '../ui/Select';
 import type { Provider } from './ModelConfig';
 
 async function api(url: string, init?: RequestInit) {
@@ -58,32 +59,28 @@ export const ProviderModal: React.FC<{
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[130]" onClick={close}>
             <form onClick={e => e.stopPropagation()} onSubmit={submit}
-                className="w-full max-w-md bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
+                className="w-full max-w-md bg-white dark:bg-[#1a1a1a] border border-neutral-300 dark:border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-base font-semibold text-white">{editing ? '编辑接入点' : '新建接入点'}</h3>
-                    <button type="button" onClick={close} className="text-neutral-500 hover:text-white"><X size={18} /></button>
+                    <h3 className="text-base font-semibold text-neutral-900 dark:text-white">{editing ? '编辑接入点' : '新建接入点'}</h3>
+                    <button type="button" onClick={close} className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-900 dark:hover:text-white"><X size={18} /></button>
                 </div>
                 <Field label="名称">
                     <input value={name} onChange={e => setName(e.target.value)} autoFocus placeholder="如 DeepSeek / Flow"
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 outline-none focus:border-blue-500/60" />
+                        className="w-full bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500/60" />
                 </Field>
                 <Field label="类型">
-                    <select value={kind} onChange={e => setKind(e.target.value as 'fp' | 'openai')}
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 outline-none focus:border-blue-500/60">
-                        <option value="openai">OpenAI 兼容（文字 / 视觉 / 通用）</option>
-                        <option value="fp">Flow (fp) 网关（图片 / 视频）</option>
-                    </select>
+                    <Select value={kind} onChange={v => setKind(v as 'fp' | 'openai')} options={[{ value: 'openai', label: 'OpenAI 兼容（文字 / 视觉 / 通用）' }, { value: 'fp', label: 'Flow (fp) 网关（图片 / 视频）' }]} />
                 </Field>
                 <Field label="Base URL">
                     <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1"
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 font-mono outline-none focus:border-blue-500/60" />
+                        className="w-full bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 font-mono outline-none focus:border-blue-500/60" />
                 </Field>
                 <Field label={editing ? 'API Key（留空=不修改）' : 'API Key'}>
                     <input type="text" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={editing ? (provider?.hasKey ? '••••••（已配置，留空保持不变）' : '尚未配置') : 'sk-...'}
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 font-mono outline-none focus:border-blue-500/60" />
+                        className="w-full bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 font-mono outline-none focus:border-blue-500/60" />
                 </Field>
                 <div className="flex justify-end gap-2 mt-1">
-                    <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50">取消</button>
+                    <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-200 dark:bg-neutral-800 hover:bg-neutral-300 dark:hover:bg-neutral-700 text-neutral-900 dark:text-white disabled:opacity-50">取消</button>
                     <button type="submit" disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 disabled:opacity-50">
                         {busy && <Loader2 size={14} className="animate-spin" />}{editing ? '保存' : '创建'}
                     </button>
@@ -95,7 +92,7 @@ export const ProviderModal: React.FC<{
 
 const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
     <label className="flex flex-col gap-1">
-        <span className="text-[11px] text-neutral-500">{label}</span>
+        <span className="text-[11px] text-neutral-400 dark:text-neutral-500">{label}</span>
         {children}
     </label>
 );

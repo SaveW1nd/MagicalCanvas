@@ -11,6 +11,18 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/site.webmanifest" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // class 策略：切换 <html class="dark"> 控制 Tailwind dark: 变体
+    tailwind.config = { darkMode: 'class' };
+    // 首屏即应用持久化主题，避免闪烁（默认深色）
+    (function () {
+      try {
+        var t = localStorage.getItem('mc_theme') || 'dark';
+        if (t !== 'light') document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+      } catch (e) { document.documentElement.classList.add('dark'); }
+    })();
+  </script>
   <style>
     /* Custom scrollbar for better aesthetics */
     ::-webkit-scrollbar {
@@ -31,12 +43,18 @@
       background: #444;
     }
 
+    /* 浅色模式滚动条 */
+    html:not(.dark) ::-webkit-scrollbar-track { background: #f1f1f1; }
+    html:not(.dark) ::-webkit-scrollbar-thumb { background: #ccc; }
+    html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #bbb; }
+
     body {
       background-color: #050505;
       color: #e5e5e5;
       overflow: hidden;
       /* Prevent body scroll, handle in canvas */
     }
+    html:not(.dark) body { background-color: #fafafa; color: #171717; }
   </style>
 
 </head>

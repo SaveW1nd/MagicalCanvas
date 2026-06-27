@@ -22,8 +22,8 @@ const NAV: { key: Tab; label: string; icon: React.ReactNode }[] = [
 
 const Placeholder: React.FC<{ title: string; note: string }> = ({ title, note }) => (
     <div className="max-w-2xl">
-        <h2 className="text-lg font-semibold text-white mb-2">{title}</h2>
-        <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/50 p-8 text-center text-neutral-500 text-sm">
+        <h2 className="text-lg font-semibold text-neutral-900 dark:text-white mb-2">{title}</h2>
+        <div className="rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/50 p-8 text-center text-neutral-400 dark:text-neutral-500 text-sm">
             {note}
         </div>
     </div>
@@ -35,31 +35,31 @@ export const AdminConsole: React.FC = () => {
     const [showChangePw, setShowChangePw] = useState(false);
 
     return (
-        <div className="fixed inset-0 flex bg-[#0a0a0a] text-neutral-200" style={{ top: 'var(--titlebar-h, 0px)' }}>
+        <div className="fixed inset-0 flex bg-neutral-100 dark:bg-[#0a0a0a] text-neutral-800 dark:text-neutral-200" style={{ top: 'var(--titlebar-h, 0px)' }}>
             {/* Sidebar */}
-            <aside className="w-56 shrink-0 border-r border-neutral-800 flex flex-col">
-                <div className="flex items-center gap-2 px-5 h-14 border-b border-neutral-800">
+            <aside className="w-56 shrink-0 border-r border-neutral-200 dark:border-neutral-800 flex flex-col">
+                <div className="flex items-center gap-2 px-5 h-14 border-b border-neutral-200 dark:border-neutral-800">
                     <img src="/logo.png" alt="logo" className="w-7 h-7 rounded-lg object-contain bg-black/20" />
-                    <span className="font-semibold text-white text-sm">管理后台</span>
+                    <span className="font-semibold text-neutral-900 dark:text-white text-sm">管理后台</span>
                 </div>
                 <nav className="flex-1 p-2">
                     {NAV.map(n => (
                         <button key={n.key} onClick={() => setTab(n.key)}
-                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm mb-1 transition-colors ${tab === n.key ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white hover:bg-neutral-900'}`}>
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm mb-1 transition-colors ${tab === n.key ? 'bg-neutral-200 text-neutral-900 dark:bg-neutral-800 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-900'}`}>
                             {n.icon}{n.label}
                         </button>
                     ))}
                 </nav>
-                <div className="p-2 border-t border-neutral-800">
-                    <div className="px-3 py-1.5 text-[11px] text-neutral-500 truncate" title={user?.email}>
+                <div className="p-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <div className="px-3 py-1.5 text-[11px] text-neutral-400 dark:text-neutral-500 truncate" title={user?.email}>
                         {user?.username} · 管理员
                     </div>
                     <button onClick={() => setShowChangePw(true)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 transition-colors">
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors">
                         <KeyRound size={18} /> 修改密码
                     </button>
                     <button onClick={() => { void logout(); }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 transition-colors">
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors">
                         <LogOut size={18} /> 退出登录
                     </button>
                 </div>

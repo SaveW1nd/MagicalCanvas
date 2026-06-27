@@ -55,6 +55,7 @@ import { VideoStudioPage } from './components/videoStudio/VideoStudioPage';
 import { AppDialogHost, showAppAlert } from './components/ui/AppDialog';
 import { DesktopTitleBar } from './components/ui/DesktopTitleBar';
 import { ToastHost, showToast } from './components/Toast';
+import { useTheme } from './contexts/ThemeContext';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -92,7 +93,8 @@ export default function App() {
     type: 'global'
   });
 
-  const [canvasTheme, setCanvasTheme] = useState<'dark' | 'light'>('dark');
+  // 画布主题取自全局 ThemeContext（与登录/后台统一，由右下角浮动按钮切换）
+  const { theme: canvasTheme, toggleTheme } = useTheme();
 
   // Panel state management (history, chat, asset library, expand)
   const {
@@ -1739,7 +1741,7 @@ export default function App() {
           hasUnsavedChanges={hasUnsavedChanges}
           isChatOpen={isChatOpen}
           canvasTheme={canvasTheme}
-          onToggleTheme={() => setCanvasTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+          onToggleTheme={toggleTheme}
           lastAutoSaveTime={lastAutoSaveTime}
         />
       )}

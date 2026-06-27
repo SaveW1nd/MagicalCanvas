@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { Loader2 } from 'lucide-react';
 import App from './App';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { ThemeToggle } from './components/ui/ThemeToggle';
 import { LoginPage } from './components/auth/LoginPage';
 import { AdminConsole } from './components/admin/AdminConsole';
 
@@ -16,21 +18,25 @@ const Gate: React.FC = () => {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a] text-neutral-500">
+      <div className="fixed inset-0 flex items-center justify-center bg-neutral-100 text-neutral-400 dark:bg-[#0a0a0a] dark:text-neutral-500">
         <Loader2 size={28} className="animate-spin" />
       </div>
     );
   }
-  if (!user) return <LoginPage />;
+  // 浮动主题切换按钮：所有页面（登录/后台/画布）都显示
+  const themeBtn = <ThemeToggle />;
+  if (!user) return <>{themeBtn}<LoginPage /></>;
   // 管理员进独立后台（不进画布）；普通用户进画布
-  return user.role === 'admin' ? <AdminConsole /> : <App />;
+  return <>{themeBtn}{user.role === 'admin' ? <AdminConsole /> : <App />}</>;
 };
 
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <Gate />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );
