@@ -963,6 +963,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     }
                 }
             }
+        } else if (playingRef.current && clips.length === 0) {
+            // 无主视频片段（纯配音/字幕/画中画）：用墙钟推进播放头，
+            // 否则 audios/overlays 同步逻辑因 t 不动而无法播放（曾导致「听不了」）。
+            const globalT = playheadRef.current + dt;
+            setPlayhead(globalT);
+            playheadRef.current = globalT;
+            if (globalT >= totalDuration - 0.02) {
+                setPlaying(false);
+                playingRef.current = false;
+            }
         }
 
         // 配音/音乐同步（变速 + 静音）
@@ -1028,7 +1038,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         }
 
         rafRef.current = requestAnimationFrame(tick);
-    }, [clips, clipStarts, audios, overlays, syncVideoTo, audioTrackMuted, audioLaneMuted, videoTrackMuted, startTransPreview]);
+    }, [clips, clipStarts, audios, overlays, syncVideoTo, audioTrackMuted, audioLaneMuted, videoTrackMuted, startTransPreview, totalDuration]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -1037,17 +1047,24 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     }, [isOpen, tick]);
 
     const handlePlayPause = () => {
-        if (clips.length === 0) return;
+        // 只要有视频/配音/画中画任一可播内容就允许播放（纯配音+字幕也能预览）
+        if (clips.length === 0 && audios.length === 0 && overlays.length === 0) return;
         if (playing) {
             setPlaying(false);
             videoRef.current?.pause();
         } else {
             let t = playheadRef.current;
-            const clipTotal = clips.reduce((s, c) => s + clipDur(c), 0);
-            if (t >= clipTotal - 0.05) t = 0; // 播完后从头开始
+            if (t >= totalDuration - 0.05) t = 0; // 播完后从头开始
             setPlaying(true);
             playingRef.current = true;
-            syncVideoTo(t, true);
+            lastTickRef.current = performance.now();
+            if (clips.length > 0) {
+                syncVideoTo(t, true);
+            } else {
+                // 无主视频：直接定位播放头，由 tick 用墙钟推进，audios/overlays 自行同步
+                setPlayhead(t);
+                playheadRef.current = t;
+            }
         }
     };
 
