@@ -7,7 +7,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import {
-    getUserByEmail, getUserById, createUser, recordLogin, denylistToken, publicUser,
+    getUserByEmail, getUserById, createUser, recordLogin, denylistToken, publicUser, updateUser,
 } from '../db/index.js';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../auth/tokens.js';
@@ -65,6 +65,19 @@ router.post('/logout', requireAuth, (req, res) => {
 // GET /api/auth/me — current user (used on SPA mount)
 router.get('/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
+});
+
+// POST /api/auth/change-password { currentPassword, newPassword }
+router.post('/change-password', requireAuth, (req, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: '请输入当前密码和新密码' });
+    if (String(newPassword).length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
+    const user = getUserById(req.user.id);
+    if (!user || !verifyPassword(currentPassword, user.passwordHash)) {
+        return res.status(401).json({ error: '当前密码错误' });
+    }
+    updateUser(user.id, { passwordHash: hashPassword(newPassword) });
+    res.json({ success: true });
 });
 
 // POST /api/auth/register  { email, password, username } — gated by ALLOW_SELF_REGISTER

@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 import { Plus, Save, Loader2, Settings, Pencil, LogOut } from 'lucide-react';
 import { SettingsModal } from './modals/SettingsModal';
 import { useAuth } from '../contexts/AuthContext';
+import { ChangePasswordModal } from './auth/ChangePasswordModal';
 
 interface TopBarProps {
     // Title
@@ -49,6 +50,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     const [showNewConfirm, setShowNewConfirm] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showChangePw, setShowChangePw] = useState(false);
     const { user, logout } = useAuth();
 
     const handleTitleBlur = () => {
@@ -193,12 +195,13 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {/* 用户 / 退出登录 */}
                     {user && (
                         <div className="flex items-center gap-1.5 pl-1">
-                            <span
-                                className={`hidden sm:inline text-xs max-w-[120px] truncate ${canvasTheme === 'dark' ? 'text-neutral-400' : 'text-neutral-500'}`}
-                                title={`${user.username}${user.role === 'admin' ? '（管理员）' : ''} · ${user.email}`}
+                            <button
+                                onClick={() => setShowChangePw(true)}
+                                className={`hidden sm:inline text-xs max-w-[120px] truncate cursor-pointer transition-colors ${canvasTheme === 'dark' ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'}`}
+                                title={`${user.username}${user.role === 'admin' ? '（管理员）' : ''} · ${user.email} · 点击修改密码`}
                             >
                                 {user.username}{user.role === 'admin' ? ' · 管理员' : ''}
-                            </span>
+                            </button>
                             <button
                                 onClick={() => { void logout(); }}
                                 className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors border ${canvasTheme === 'dark'
@@ -258,6 +261,9 @@ export const TopBar: React.FC<TopBarProps> = ({
 
             {/* 设置弹窗 */}
             <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+
+            {/* 修改密码 */}
+            <ChangePasswordModal isOpen={showChangePw} onClose={() => setShowChangePw(false)} />
         </>
     );
 };
