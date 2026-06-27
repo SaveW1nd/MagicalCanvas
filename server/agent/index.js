@@ -20,6 +20,7 @@ import { getKey } from "../config.js";
 import { gpt2apiChat, requestChatCompletion } from "../services/gpt2api.js";
 import { AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
 import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
+import { canAccess } from "../auth/ownership.js";
 
 /** 一个 turn 内最多自主调用工具的轮数（防失控成本），由路由侧据此兜底。 */
 export const MAX_AGENT_STEPS = 10;
@@ -255,13 +256,22 @@ export function deleteSession(sessionId) {
     return false;
 }
 
-export function listSessions() {
+/** 读取某会话的 ownerId（缓存优先，否则读盘）；新会话返回 null */
+export function getSessionOwner(sessionId) {
+    const cached = sessionCache.get(sessionId);
+    if (cached) return cached.ownerId || null;
+    const data = getSessionData(sessionId);
+    return data ? (data.ownerId || null) : null;
+}
+
+export function listSessions(user) {
     if (!fs.existsSync(CHATS_DIR)) return [];
     const files = fs.readdirSync(CHATS_DIR).filter(f => f.endsWith('.json'));
     const sessions = [];
     for (const file of files) {
         try {
             const data = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, file), 'utf8'));
+            if (user && !canAccess(data.ownerId, user)) continue; // 仅本人会话
             sessions.push({
                 id: data.id,
                 topic: data.topic || "New Chat",
@@ -460,8 +470,9 @@ function finalizeOrPause(session, sessionId, working, result, accumulatedText) {
  * 开启一个 turn：追加用户消息并调用模型。
  * @returns {Promise<object>} finish='stop' 含 response/topic；finish='tool_calls' 含 tool_calls
  */
-export async function sendMessage(sessionId, content, media, onDelta) {
+export async function sendMessage(sessionId, content, media, onDelta, ownerId) {
     const session = getSession(sessionId);
+    if (ownerId && !session.ownerId) session.ownerId = ownerId; // 首条消息绑定归属
     console.log(`[Agent] turn start: session=${sessionId} history=${session.messages.length}`);
 
     // 超长则先压缩较早历史为摘要（UI 仍保留全部）
@@ -533,6 +544,7 @@ export async function submitToolResults(sessionId, toolResults, onDelta) {
 
 export default {
     getSession,
+    getSessionOwner,
     deleteSession,
     listSessions,
     getSessionData,

@@ -1449,12 +1449,17 @@ app.post('/api/chat', async (req, res) => {
     if (!message && !(media && media.length)) {
         return res.status(400).json({ error: "message or media is required" });
     }
+    // 归属：已存在的会话只能本人续聊；新会话首条消息绑定到当前用户
+    const owner = chatAgent.getSessionOwner(sessionId);
+    if (owner && !canAccess(owner, req.user)) {
+        return res.status(403).json({ error: '无权访问该会话' });
+    }
 
     const send = startSSE(res);
     try {
         const result = await chatAgent.sendMessage(sessionId, message, media, (delta) => {
             if (delta) send({ type: 'delta', text: delta });
-        });
+        }, req.user.id);
         await emitAgentResult(send, result);
         res.end();
     } catch (error) {
@@ -1474,6 +1479,10 @@ app.post('/api/chat/tools', async (req, res) => {
     if (!Array.isArray(toolResults)) {
         return res.status(400).json({ error: "toolResults (array) is required" });
     }
+    const owner = chatAgent.getSessionOwner(sessionId);
+    if (owner && !canAccess(owner, req.user)) {
+        return res.status(403).json({ error: '无权访问该会话' });
+    }
 
     const send = startSSE(res);
     try {
@@ -1492,7 +1501,7 @@ app.post('/api/chat/tools', async (req, res) => {
 // List all chat sessions
 app.get('/api/chat/sessions', async (req, res) => {
     try {
-        const sessions = chatAgent.listSessions();
+        const sessions = chatAgent.listSessions(req.user);
         res.json(sessions);
     } catch (error) {
         console.error("List sessions error:", error);
@@ -1503,6 +1512,10 @@ app.get('/api/chat/sessions', async (req, res) => {
 // Delete a chat session
 app.delete('/api/chat/sessions/:id', async (req, res) => {
     try {
+        const owner = chatAgent.getSessionOwner(req.params.id);
+        if (owner && !canAccess(owner, req.user)) {
+            return res.status(403).json({ error: '无权删除该会话' });
+        }
         chatAgent.deleteSession(req.params.id);
         res.json({ success: true });
     } catch (error) {
@@ -1517,6 +1530,9 @@ app.get('/api/chat/sessions/:id', async (req, res) => {
         const sessionData = chatAgent.getSessionData(req.params.id);
         if (!sessionData) {
             return res.status(404).json({ error: "Session not found" });
+        }
+        if (!canAccess(sessionData.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权访问该会话' });
         }
         res.json(sessionData);
     } catch (error) {
@@ -1543,7 +1559,7 @@ if (process.env.NODE_ENV === 'production') {
 // then backfill ownerId on pre-auth data so it stays accessible (P1).
 try {
     const adminId = bootstrapAdmin();
-    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR] });
+    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR] });
 } catch (e) {
     console.error('[auth] bootstrap/migrate failed:', e.message);
 }
