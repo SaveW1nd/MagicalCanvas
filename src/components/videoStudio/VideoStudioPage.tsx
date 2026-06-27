@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useTheme } from '../../contexts/ThemeContext';
 import {
     X, Play, Pause, Plus, Trash2, ChevronUp, ChevronDown, Scissors,
     Loader2, Download, Mic, Captions, Sparkles, Film, ArrowLeftRight, Check,
@@ -398,6 +399,10 @@ const fmtTime = (s: number) => {
 // ============================================================================
 
 export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClose }) => {
+    // 视频剪辑强制深色：打开时隐藏全局浮动主题按钮
+    const { setForceDark } = useTheme();
+    useEffect(() => { setForceDark(isOpen); return () => setForceDark(false); }, [isOpen, setForceDark]);
+
     // ---- 素材库（视频 + 图片）----
     const [library, setLibrary] = useState<LibraryAsset[]>([]);
     const [libLoading, setLibLoading] = useState(false);

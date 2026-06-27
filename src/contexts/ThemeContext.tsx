@@ -9,9 +9,13 @@
 import React, { createContext, useContext, useCallback, useEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
-interface ThemeCtx { theme: Theme; isDark: boolean; toggleTheme: () => void; setTheme: (t: Theme) => void; }
+interface ThemeCtx {
+    theme: Theme; isDark: boolean; toggleTheme: () => void; setTheme: (t: Theme) => void;
+    // 当某个「强制深色」的全屏工作区（如视频剪辑）打开时置 true，用于隐藏浮动主题按钮
+    forceDark: boolean; setForceDark: (v: boolean) => void;
+}
 
-const Ctx = createContext<ThemeCtx>({ theme: 'dark', isDark: true, toggleTheme: () => {}, setTheme: () => {} });
+const Ctx = createContext<ThemeCtx>({ theme: 'dark', isDark: true, toggleTheme: () => {}, setTheme: () => {}, forceDark: false, setForceDark: () => {} });
 
 function readInitial(): Theme {
     try { return localStorage.getItem('mc_theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
@@ -26,13 +30,14 @@ function apply(theme: Theme) {
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [theme, setThemeState] = useState<Theme>(readInitial);
+    const [forceDark, setForceDark] = useState(false);
 
     useEffect(() => { apply(theme); }, [theme]);
 
     const setTheme = useCallback((t: Theme) => setThemeState(t), []);
     const toggleTheme = useCallback(() => setThemeState(p => (p === 'dark' ? 'light' : 'dark')), []);
 
-    return <Ctx.Provider value={{ theme, isDark: theme === 'dark', toggleTheme, setTheme }}>{children}</Ctx.Provider>;
+    return <Ctx.Provider value={{ theme, isDark: theme === 'dark', toggleTheme, setTheme, forceDark, setForceDark }}>{children}</Ctx.Provider>;
 };
 
 export const useTheme = () => useContext(Ctx);

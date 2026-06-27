@@ -7,7 +7,8 @@ import { Sun, Moon } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export const ThemeToggle: React.FC = () => {
-    const { isDark, toggleTheme } = useTheme();
+    const { isDark, toggleTheme, forceDark } = useTheme();
+    if (forceDark) return null; // 视频剪辑等强制深色工作区打开时隐藏
     return (
         <button
             onClick={toggleTheme}
