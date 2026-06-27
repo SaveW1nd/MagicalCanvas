@@ -9,8 +9,11 @@ import {
   Plus,
   Film,
   Scissors,
-  Wand2
+  Wand2,
+  Sun,
+  Moon
 } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 
 // 悬停即时提示：图标右侧弹出标签（比原生 title 更快、有样式）
 const Tip: React.FC<{ label: string; isDark: boolean; hidden?: boolean; children: React.ReactNode }> = ({ label, isDark, hidden, children }) => (
