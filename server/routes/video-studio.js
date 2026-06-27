@@ -528,7 +528,8 @@ router.post('/transcribe', async (req, res) => {
                     }
                     const resp = await fetch(`${baseUrl}/chat/completions`, {
                         method: 'POST',
-                        headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+                        // Bearer 通吃（官方 api.xiaomimimo.com 与 axiomcode 网关都支持；后者只认 Bearer）
+                        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             model,
                             messages: [{

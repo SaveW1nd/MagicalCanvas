@@ -249,6 +249,13 @@ export function seedRegistryFromConfig() {
  */
 export function ensureAsrSeed() {
     if (listModelsByCategory('asr').length > 0) return false;
+    // 优先复用 MiMo 接入点（自带 mimo-v2.5-asr 语音识别，开箱即用）。
+    const mimo = listProviders().find(p => /mimo|axiomcode/i.test(p.name) || /axiomcode\.dev/i.test(p.baseUrl));
+    if (mimo) {
+        createModel({ modelId: 'mimo-v2.5-asr', label: 'MiMo ASR', category: 'asr', providerId: mimo.id, isDefault: true, sortOrder: 0, capabilities: {} });
+        return true;
+    }
+    // 否则建一个空的 Whisper 接入点占位（旧 ASR 指向已死 gpt2api，故留空待管理员填）。
     const rawUrl = getKey('ASR_API_URL');
     const baseUrl = rawUrl && !/gpt2api\.com/i.test(rawUrl) ? rawUrl : '';
     const prov = createProvider({ name: '语音识别 (Whisper)', kind: 'openai', baseUrl, apiKey: baseUrl ? getKey('ASR_API_KEY') : '' });
