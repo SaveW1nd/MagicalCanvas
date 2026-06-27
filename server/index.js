@@ -23,6 +23,7 @@ import { requireAuth } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { canAccess } from './auth/ownership.js';
 import { migrateOwnership } from './db/migrate-ownership.js';
+import { userMediaDir, libUrlToPath } from './utils/imageHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -336,7 +337,7 @@ app.post('/api/library', async (req, res) => {
         }
 
         // Determine destination directory
-        const destDir = path.join(LIBRARY_ASSETS_DIR, category);
+        const destDir = path.join(LIBRARY_DIR, 'users', req.user.id, 'assets', category);
         if (!fs.existsSync(destDir)) {
             fs.mkdirSync(destDir, { recursive: true });
         }
@@ -436,7 +437,7 @@ app.post('/api/library', async (req, res) => {
             ownerId: req.user.id,
             name: name,
             category: category,
-            url: `/library/assets/${category}/${destFilename}`,
+            url: `/library/users/${req.user.id}/assets/${category}/${destFilename}`,
             type: sourceUrl.includes('video') || (sourceUrl.startsWith('data:video')) ? 'video' : 'image',
             createdAt: new Date().toISOString(),
             ...meta
@@ -556,14 +557,10 @@ app.delete('/api/library/:id', async (req, res) => {
             return res.status(403).json({ error: '无权删除该素材' });
         }
 
-        // Delete the actual file if it exists in our assets folder
-        // asset.url usually looks like /library/assets/Category/file.ext
-        if (asset.url && asset.url.startsWith('/library/assets/')) {
-            const relativePath = asset.url.replace('/library/assets/', '');
-            const filePath = path.join(LIBRARY_ASSETS_DIR, relativePath);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
+        // Delete the actual file (兼容旧 /library/assets/... 与新 /library/users/{id}/assets/...)
+        const filePath = libUrlToPath(LIBRARY_DIR, asset.url);
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
         }
 
         // Remove from array
@@ -996,25 +993,29 @@ app.post('/api/assets/:type', async (req, res) => {
         while (fs.existsSync(path.join(targetDir, `${idNum}.json`))) idNum++;
         const id = idNum.toString();
         const ext = type === 'images' ? 'png' : 'mp4';
-        const filename = `${id}.${ext}`;
+        // 媒体存入用户分目录(不可猜)，文件名带随机后缀；元数据留在 flat 目录供按 owner 列出
+        const mediaName = `${id}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const ownerDir = userMediaDir(LIBRARY_DIR, req.user.id, type);
+        const url = `/library/users/${req.user.id}/${type}/${mediaName}`;
         const metaFilename = `${id}.json`;
 
         // Save the asset file
         const base64Data = data.replace(/^data:[^;]+;base64,/, '');
-        fs.writeFileSync(path.join(targetDir, filename), base64Data, 'base64');
+        fs.writeFileSync(path.join(ownerDir, mediaName), base64Data, 'base64');
 
-        // Save metadata
+        // Save metadata (flat dir for listing; url 指向分目录媒体)
         const metadata = {
             id,
             ownerId: req.user.id,
-            filename,
+            filename: mediaName,
+            url,
             prompt: prompt || '',
             createdAt: new Date().toISOString(),
             type
         };
         fs.writeFileSync(path.join(targetDir, metaFilename), JSON.stringify(metadata, null, 2));
 
-        res.json({ success: true, id, filename, url: `/library/${type}/${filename}` });
+        res.json({ success: true, id, filename: mediaName, url });
     } catch (error) {
         console.error('Save asset error:', error);
         res.status(500).json({ error: error.message });
@@ -1048,7 +1049,8 @@ app.get('/api/assets/:type', async (req, res) => {
                     const content = fs.readFileSync(path.join(targetDir, file), 'utf8');
                     const metadata = JSON.parse(content);
                     if (!canAccess(metadata.ownerId, req.user)) continue; // 仅本人历史
-                    metadata.url = `/library/${type}/${metadata.filename}`;
+                    // 新数据已含分目录 url；旧 flat 数据回退到 /library/{type}/{filename}
+                    metadata.url = metadata.url || `/library/${type}/${metadata.filename}`;
                     assets.push(metadata);
                 } catch (e) {
                     // Skip invalid JSON files
@@ -1089,27 +1091,26 @@ app.delete('/api/assets/:type/:id', async (req, res) => {
         const targetDir = type === 'images' ? IMAGES_DIR : VIDEOS_DIR;
         const metaPath = path.join(targetDir, `${id}.json`);
 
-        // Read metadata to get the actual filename (may differ from ID) + check ownership
-        let assetFilename = null;
+        // Read metadata to locate the media + check ownership
+        let mediaPath = null;
         if (fs.existsSync(metaPath)) {
             try {
                 const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
                 if (!canAccess(metadata.ownerId, req.user)) {
                     return res.status(403).json({ error: '无权删除该素材' });
                 }
-                assetFilename = metadata.filename;
+                // 新数据用 url 定位(分目录)，旧 flat 数据用 filename
+                mediaPath = metadata.url ? libUrlToPath(LIBRARY_DIR, metadata.url)
+                    : (metadata.filename ? path.join(targetDir, metadata.filename) : null);
             } catch (e) {
                 console.warn(`Could not read metadata for ${id}:`, e.message);
             }
         }
 
-        // Delete the media file using filename from metadata
-        if (assetFilename) {
-            const assetPath = path.join(targetDir, assetFilename);
-            if (fs.existsSync(assetPath)) {
-                fs.unlinkSync(assetPath);
-                console.log(`Deleted asset file: ${assetPath}`);
-            }
+        // Delete the media file
+        if (mediaPath && fs.existsSync(mediaPath)) {
+            fs.unlinkSync(mediaPath);
+            console.log(`Deleted asset file: ${mediaPath}`);
         }
 
         // Delete the metadata file
@@ -1155,10 +1156,9 @@ app.post('/api/assets/:type/clean', async (req, res) => {
                     // createdAt 无效或晚于截止时间的保留（NaN 比较为 false，自动保留）
                     if (!(created < cutoff)) continue;
                 }
-                if (meta.filename) {
-                    const assetPath = path.join(targetDir, meta.filename);
-                    if (fs.existsSync(assetPath)) fs.unlinkSync(assetPath);
-                }
+                const mp = meta.url ? libUrlToPath(LIBRARY_DIR, meta.url)
+                    : (meta.filename ? path.join(targetDir, meta.filename) : null);
+                if (mp && fs.existsSync(mp)) fs.unlinkSync(mp);
                 fs.unlinkSync(metaPath);
                 deleted++;
             } catch (e) {

@@ -11,7 +11,7 @@ import path from 'path';
 import { generateKlingVideo, generateKlingImage, generateKlingMultiImage } from '../services/kling.js';
 import { generateHailuoVideo } from '../services/hailuo.js';
 import { generateOpenAIImage } from '../services/openai.js';
-import { resolveImageToBase64, saveBufferToFile } from '../utils/imageHelpers.js';
+import { resolveImageToBase64, saveBufferToFile, userMediaDir } from '../utils/imageHelpers.js';
 import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
 import { generateFlow2apiImage, generateFlow2apiVideo, isFlow2apiImageModel, isFlow2apiVideoModel } from '../services/flow2api.js';
 
@@ -188,17 +188,21 @@ router.post('/generate-image', async (req, res) => {
             return res.status(400).json({ error: `不支持的图片模型: ${effectiveImageModel}` });
         }
 
-        // Save to library - use unique filename to preserve previous generations
-        const saved = saveBufferToFile(imageBuffer, IMAGES_DIR, 'img', imageFormat);
+        // Save media into the owner's namespaced dir (P1：路径含 ownerId，URL 不可跨用户猜测)
+        const ownerImagesDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'images');
+        const saved = saveBufferToFile(imageBuffer, ownerImagesDir, 'img', imageFormat);
+        const resultUrl = `/library/users/${req.user?.id || '_anon'}/images/${saved.filename}`;
 
         // Determine metadata ID: use nodeId for recovery if available, otherwise use file ID
         const metadataId = nodeId || saved.id;
 
-        // Save metadata (id must match the metadata filename for delete to work)
+        // Metadata stays in the flat IMAGES_DIR (so the owner-filtered history list finds it);
+        // url 指向分目录后的真实媒体。
         const metadata = {
-            id: metadataId,  // Must match the filename for delete API to find it
+            id: metadataId,
             ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
+            url: resultUrl,
             prompt: prompt,
             title: title || '',  // 节点标题（如「分镜 01」），剪辑页素材列表用于区分镜头
             model: imageModel || 'gemini-pro',
@@ -207,8 +211,8 @@ router.post('/generate-image', async (req, res) => {
         };
         fs.writeFileSync(path.join(IMAGES_DIR, `${metadataId}.json`), JSON.stringify(metadata, null, 2));
 
-        console.log(`Image saved: ${saved.url} (model: ${imageModel || 'gemini-pro'})`);
-        return res.json({ resultUrl: saved.url });
+        console.log(`Image saved: ${resultUrl} (model: ${imageModel || 'gemini-pro'})`);
+        return res.json({ resultUrl });
 
     } catch (error) {
         console.error("Server Image Gen Error:", error);
@@ -404,17 +408,19 @@ router.post('/generate-video', async (req, res) => {
             return res.status(400).json({ error: `不支持的视频模型: ${videoModel || ''}` });
         }
 
-        // Save to library - use unique filename to preserve previous generations
-        const saved = saveBufferToFile(videoBuffer, VIDEOS_DIR, 'vid', 'mp4');
+        // Save media into the owner's namespaced dir (P1)
+        const ownerVideosDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'videos');
+        const saved = saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
+        const resultUrl = `/library/users/${req.user?.id || '_anon'}/videos/${saved.filename}`;
 
         // Determine metadata ID: use nodeId for recovery if available, otherwise use file ID
         const metadataId = nodeId || saved.id;
 
-        // Save metadata (id must match the metadata filename for delete to work)
         const metadata = {
-            id: metadataId,  // Must match the filename for delete API to find it
+            id: metadataId,
             ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
+            url: resultUrl,
             prompt: prompt,
             title: title || '',  // 节点标题（如「镜头 01 视频」），剪辑页素材列表用于区分镜头
             model: videoModel || 'veo-3.1',
@@ -425,8 +431,8 @@ router.post('/generate-video', async (req, res) => {
         };
         fs.writeFileSync(path.join(VIDEOS_DIR, `${metadataId}.json`), JSON.stringify(metadata, null, 2));
 
-        console.log(`Video saved: ${saved.url} (model: ${videoModel || 'veo-3.1'})`);
-        return res.json({ resultUrl: saved.url });
+        console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
+        return res.json({ resultUrl });
 
     } catch (error) {
         console.error("Server Video Gen Error:", error);

@@ -8,6 +8,26 @@ import fs from 'fs';
 import path from 'path';
 
 // ============================================================================
+// PER-OWNER MEDIA PATHS (P1：媒体按用户分目录，路径含 UUID 不可猜)
+// ============================================================================
+
+/** 返回某用户某类媒体的落盘目录(自动创建)：{libraryDir}/users/{ownerId}/{kind} */
+export function userMediaDir(libraryDir, ownerId, kind) {
+    const dir = path.join(libraryDir, 'users', String(ownerId || '_anon'), kind);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+/** /library/... 形式的 URL → 磁盘绝对路径(兼容旧 flat 路径与新分目录路径)；非法返回 null */
+export function libUrlToPath(libraryDir, url) {
+    const s = String(url || '');
+    if (!s.startsWith('/library/')) return null;
+    const rel = s.slice('/library/'.length).split('?')[0];
+    if (rel.includes('..')) return null; // 防穿越
+    return path.join(libraryDir, decodeURIComponent(rel));
+}
+
+// ============================================================================
 // BASE64 HELPERS
 // ============================================================================
 
