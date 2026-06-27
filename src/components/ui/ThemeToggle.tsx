@@ -13,7 +13,7 @@ export const ThemeToggle: React.FC = () => {
             onClick={toggleTheme}
             title={isDark ? '切换到浅色模式' : '切换到深色模式'}
             aria-label="切换主题"
-            className="fixed bottom-5 right-5 z-[300] w-11 h-11 rounded-full flex items-center justify-center shadow-lg border transition-colors
+            className="fixed bottom-6 right-20 z-[300] w-11 h-11 rounded-full flex items-center justify-center shadow-lg border transition-colors
                        bg-white border-neutral-200 text-amber-500 hover:bg-neutral-50
                        dark:bg-neutral-900 dark:border-neutral-700 dark:text-yellow-300 dark:hover:bg-neutral-800"
         >
