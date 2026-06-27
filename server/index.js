@@ -514,27 +514,30 @@ app.delete('/api/library/:id', async (req, res) => {
         }
 
         let libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
-        const assetIndex = libraryData.findIndex(a => a.id === id);
+        const idx = libraryData.findIndex(a => a.id === id);
+        if (idx === -1) return res.status(404).json({ error: "Asset not found" });
 
-        if (assetIndex === -1) {
-            return res.status(404).json({ error: "Asset not found" });
-        }
-
-        const asset = libraryData[assetIndex];
+        const asset = libraryData[idx];
         if (!canAccess(asset.ownerId, req.user)) {
             return res.status(403).json({ error: '无权删除该素材' });
         }
-
-        // Delete the actual file (兼容旧 /library/assets/... 与新 /library/users/{id}/assets/...)
-        const filePath = libUrlToPath(LIBRARY_DIR, asset.url);
-        if (filePath && fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        // 已发布到公共库的素材,原作者不能删,仅管理员可删(管理员走 /api/admin/assets,后续计划)
+        if (asset.visibility === 'public' && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '已发布到公共库,仅管理员可删除' });
         }
 
-        // Remove from array
-        libraryData.splice(assetIndex, 1);
-        fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
+        // 先摘行
+        libraryData.splice(idx, 1);
 
+        // 物理文件护栏:仅当 ①非引用(无 sourceAssetId) ②文件在 assets 目录(上传的库文件,非生成结果)
+        // ③无其他行引用同 url 时,才真正 unlink。生成结果由"历史"流程管理,这里不碰。
+        const isUploaded = typeof asset.url === 'string' && asset.url.includes('/assets/');
+        if (!asset.sourceAssetId && isUploaded && !assetUrlReferencedElsewhere(libraryData, asset.url, asset.id)) {
+            const filePath = libUrlToPath(LIBRARY_DIR, asset.url);
+            if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
+
+        fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
         res.json({ success: true });
     } catch (error) {
         console.error("Delete library asset error:", error);
