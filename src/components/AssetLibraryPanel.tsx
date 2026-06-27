@@ -519,8 +519,11 @@ const AssetLibraryContent = ({
                         filteredAssets.map((asset: any) => (
                             <div
                                 key={asset.id}
-                                className={`group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border cursor-pointer ${manageMode && checkedIds.has(asset.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-neutral-800 hover:border-neutral-600'}`}
-                                onClick={() => manageMode ? toggleChecked(asset.id) : onSelectAsset(asset.url, asset.type)}
+                                className={`group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border ${isPublicTab ? 'cursor-default' : 'cursor-pointer'} ${manageMode && checkedIds.has(asset.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-neutral-800 hover:border-neutral-600'}`}
+                                onClick={() => {
+                                    if (isPublicTab) return; // 公共页:点卡片不插入画布,只用「加入我的库」按钮
+                                    manageMode ? toggleChecked(asset.id) : onSelectAsset(asset.url, asset.type);
+                                }}
                             >
                                 {/* 多选模式：左上角勾选框 */}
                                 {manageMode && (
@@ -555,17 +558,24 @@ const AssetLibraryContent = ({
                                             </button>
                                         </Tip>
                                         {categoryMenuId === asset.id && (
-                                            <div className="absolute top-8 left-0 w-32 max-h-48 overflow-y-auto bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl py-1 z-30">
-                                                {categories.map((cat: string) => (
-                                                    <button
-                                                        key={cat}
-                                                        onClick={(e) => { e.stopPropagation(); onChangeCategory?.(asset.id, cat); setCategoryMenuId(null); }}
-                                                        className={`w-full px-3 py-1.5 text-left text-xs hover:bg-neutral-800 flex items-center justify-between ${asset.category === cat ? 'text-white' : 'text-neutral-400'}`}
-                                                    >
-                                                        {cat}{asset.category === cat && <Check size={12} />}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                            <>
+                                                {/* 点击空白处关闭下拉 */}
+                                                <div className="fixed inset-0 z-20" onClick={(e) => { e.stopPropagation(); setCategoryMenuId(null); }} />
+                                                <div
+                                                    className="absolute top-8 left-0 w-32 max-h-48 overflow-y-auto overscroll-contain bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl py-1 z-30"
+                                                    onWheel={(e) => e.stopPropagation()}
+                                                >
+                                                    {categories.map((cat: string) => (
+                                                        <button
+                                                            key={cat}
+                                                            onClick={(e) => { e.stopPropagation(); onChangeCategory?.(asset.id, cat); setCategoryMenuId(null); }}
+                                                            className={`w-full px-3 py-1.5 text-left text-xs hover:bg-neutral-800 flex items-center justify-between ${asset.category === cat ? 'text-white' : 'text-neutral-400'}`}
+                                                        >
+                                                            {cat}{asset.category === cat && <Check size={12} />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </>
                                         )}
                                     </div>
                                 )}
