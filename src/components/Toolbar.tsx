@@ -96,7 +96,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           className={`w-10 h-10 rounded-full flex items-center justify-center hover:scale-110 transition-all duration-200 mb-2 ${isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-neutral-900 text-white hover:bg-neutral-700'
             }`}
           onClick={onAddClick}
-          title="新建节点"
         >
           <Plus size={20} />
         </button>
@@ -108,7 +107,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
               }`}
             onClick={onWorkflowsClick}
-            title="我的工作流"
           >
             <LayoutGrid size={20} />
           </button>
@@ -117,7 +115,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <button
             className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
               }`}
-            title="素材库"
             onClick={onAssetsClick}
           >
             <ImageIcon size={20} />
@@ -128,7 +125,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
               }`}
             onClick={onHistoryClick}
-            title="历史记录"
           >
             <History size={20} />
           </button>
@@ -147,7 +143,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               }
               setIsToolsOpen(!isToolsOpen);
             }}
-            title="AI 创作"
           >
             <Sparkles size={20} />
           </button>
@@ -200,7 +195,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             className={`hover:scale-125 transition-all duration-200 ${isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'
               }`}
             onClick={onVideoStudioClick}
-            title="视频剪辑"
           >
             <Scissors size={20} />
           </button>
