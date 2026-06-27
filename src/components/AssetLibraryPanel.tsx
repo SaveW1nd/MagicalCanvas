@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput, Globe, Lock, FolderPlus } from 'lucide-react';
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 import { showToast } from './Toast';
@@ -321,6 +322,7 @@ const AssetLibraryContent = ({
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [categoryMenuId, setCategoryMenuId] = useState<string | null>(null);
+    const [categoryMenuPos, setCategoryMenuPos] = useState<{ x: number; y: number } | null>(null);
     const [addingCategory, setAddingCategory] = useState(false);
     const [newCategoryName, setNewCategoryName] = useState('');
     // 批量删除模式：点击素材为勾选而非选用
@@ -552,30 +554,37 @@ const AssetLibraryContent = ({
                                         <Tip label="改分类">
                                             <button
                                                 className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
-                                                onClick={(e) => { e.stopPropagation(); setCategoryMenuId(categoryMenuId === asset.id ? null : asset.id); }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (categoryMenuId === asset.id) { setCategoryMenuId(null); return; }
+                                                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                                    setCategoryMenuPos({ x: r.left, y: r.bottom + 4 });
+                                                    setCategoryMenuId(asset.id);
+                                                }}
                                             >
                                                 <FolderInput size={14} />
                                             </button>
                                         </Tip>
-                                        {categoryMenuId === asset.id && (
+                                        {/* 下拉菜单 portal 到 body，避开素材卡的 overflow-hidden 裁剪 */}
+                                        {categoryMenuId === asset.id && categoryMenuPos && createPortal(
                                             <>
-                                                {/* 点击空白处关闭下拉 */}
-                                                <div className="fixed inset-0 z-20" onClick={(e) => { e.stopPropagation(); setCategoryMenuId(null); }} />
+                                                <div className="fixed inset-0 z-[9998]" onClick={() => setCategoryMenuId(null)} />
                                                 <div
-                                                    className="absolute top-8 left-0 w-32 max-h-48 overflow-y-auto overscroll-contain bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl py-1 z-30"
-                                                    onWheel={(e) => e.stopPropagation()}
+                                                    className="fixed w-36 max-h-56 overflow-y-auto overscroll-contain bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-2xl py-1 z-[9999]"
+                                                    style={{ left: categoryMenuPos.x, top: categoryMenuPos.y }}
                                                 >
                                                     {categories.map((cat: string) => (
                                                         <button
                                                             key={cat}
-                                                            onClick={(e) => { e.stopPropagation(); onChangeCategory?.(asset.id, cat); setCategoryMenuId(null); }}
+                                                            onClick={() => { onChangeCategory?.(asset.id, cat); setCategoryMenuId(null); }}
                                                             className={`w-full px-3 py-1.5 text-left text-xs hover:bg-neutral-800 flex items-center justify-between ${asset.category === cat ? 'text-white' : 'text-neutral-400'}`}
                                                         >
                                                             {cat}{asset.category === cat && <Check size={12} />}
                                                         </button>
                                                     ))}
                                                 </div>
-                                            </>
+                                            </>,
+                                            document.body,
                                         )}
                                     </div>
                                 )}
