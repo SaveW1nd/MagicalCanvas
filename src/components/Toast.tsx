@@ -49,21 +49,21 @@ const ToastCard: React.FC<{ t: ToastItem }> = ({ t }) => {
     const off = t.leaving || !shown; // 进入前/离开时移到右侧外+透明
     return (
         <div
-            className={`pointer-events-auto w-fit max-w-[min(90vw,380px)] overflow-hidden rounded-lg shadow-2xl bg-white border-neutral-200 dark:bg-neutral-900 dark:border-neutral-800 border border-l-4 ${s.border} transition-all duration-300 ease-out ${off ? 'opacity-0 translate-x-[120%]' : 'opacity-100 translate-x-0'}`}
+            className={`pointer-events-auto w-fit max-w-[min(90vw,380px)] overflow-hidden rounded-lg shadow-2xl bg-neutral-900 border-neutral-800 border border-l-4 ${s.border} transition-all duration-300 ease-out ${off ? 'opacity-0 translate-x-[120%]' : 'opacity-100 translate-x-0'}`}
         >
             <div className="px-3 py-2.5 flex items-center gap-2.5">
                 <Ic size={18} className={`shrink-0 ${s.icon}`} />
-                <p className="min-w-0 flex-1 text-sm text-neutral-800 dark:text-neutral-200 leading-snug break-words">{t.message}</p>
+                <p className="min-w-0 flex-1 text-sm text-neutral-200 leading-snug break-words">{t.message}</p>
                 <button
                     onClick={() => startLeave(t.id)}
-                    className="-mr-1 p-1 shrink-0 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800 transition-colors"
+                    className="-mr-1 p-1 shrink-0 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
                     aria-label="关闭"
                 >
                     <X size={14} />
                 </button>
             </div>
             {t.duration > 0 && !t.leaving && (
-                <div className="h-0.5 bg-neutral-200 dark:bg-neutral-800/60">
+                <div className="h-0.5 bg-neutral-800/60">
                     <div className={`h-full ${s.bar}`} style={{ animation: `mcToastBar ${t.duration}ms linear forwards` }} />
                 </div>
             )}

@@ -17,7 +17,7 @@ const Gate: React.FC = () => {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-neutral-100 text-neutral-400 dark:bg-[#0a0a0a] dark:text-neutral-500">
+      <div className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a] text-neutral-500">
         <Loader2 size={28} className="animate-spin" />
       </div>
     );

@@ -150,22 +150,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                     )}
                     <button
                         onClick={() => onSave()}
-                        className={`text-sm px-5 py-2.5 rounded-full flex items-center gap-2 transition-colors font-medium border ${canvasTheme === 'dark'
+                        className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-colors font-medium border ${canvasTheme === 'dark'
                             ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-600'
                             : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-300 shadow-sm'
                             }`}
                     >
-                        <Save size={16} />
+                        <Save size={13} />
                         保存
                     </button>
                     <button
                         onClick={handleNewClick}
-                        className={`text-sm px-4 py-2.5 rounded-full flex items-center gap-2 transition-colors font-medium border ${canvasTheme === 'dark'
+                        className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-colors font-medium border ${canvasTheme === 'dark'
                             ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-600'
                             : 'bg-neutral-200 hover:bg-neutral-300 text-neutral-900 border-neutral-300'
                             }`}
                     >
-                        <Plus size={16} />
+                        <Plus size={13} />
                         新建
                     </button>
                     {/* 设置（API 密钥/模型）仅管理员可见；普通用户不允许配置，统一在管理后台 */}

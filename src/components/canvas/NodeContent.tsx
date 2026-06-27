@@ -10,7 +10,6 @@ import { Loader2, Maximize2, ImageIcon as ImageIcon, Film, Upload, Pencil, Video
 import { NodeData, NodeStatus, NodeType } from '../../types';
 import { showToast } from '../Toast';
 import { optimizePromptRequest } from '../../utils/aiPrompt';
-import { useTheme } from '../../contexts/ThemeContext';
 
 /**
  * 带自动重试的图片：批量生成时浏览器同域并发连接（最多 6 个）可能被生图请求占满，
@@ -73,7 +72,6 @@ export const NodeContent: React.FC<NodeContentProps> = ({
     onImageToVideo,
     onUpdate
 }) => {
-    const { isDark } = useTheme();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Local state for text node textarea to prevent lag
@@ -165,7 +163,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
             {/* Result View - Show when successful OR when regenerating (loading with existing content) */}
             {(isSuccess || isLoading) && data.resultUrl ? (
                 <div
-                    className={`relative w-full ${isDark ? 'bg-black' : 'bg-neutral-100'} group/image ${!selected ? '' : 'rounded-xl overflow-hidden'}`}
+                    className={`relative w-full bg-black group/image ${!selected ? '' : 'rounded-xl overflow-hidden'}`}
                     style={getAspectRatioStyle()}
                 >
                     {isVideoType ? (
@@ -305,9 +303,9 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                 </div>
             ) : (
                 /* Placeholder / Empty State for Image/Video */
-                <div className={`relative w-full aspect-[4/3] ${isDark ? 'bg-[#141414]' : 'bg-neutral-100'} flex flex-col items-center justify-center gap-3 overflow-hidden
+                <div className={`relative w-full aspect-[4/3] bg-[#141414] flex flex-col items-center justify-center gap-3 overflow-hidden
             ${isLoading ? 'animate-pulse' : ''}
-            ${!selected ? 'rounded-2xl' : `rounded-xl border border-dashed ${isDark ? 'border-neutral-800' : 'border-neutral-300'}`}`
+            ${!selected ? 'rounded-2xl' : 'rounded-xl border border-dashed border-neutral-800'}`
                 }>
                     {/* Input Image Preview for Video Nodes */}
                     {isVideoType && inputUrl && (
@@ -349,7 +347,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                                 </>
                             )}
 
-                            <div className={isDark ? 'text-neutral-700' : 'text-neutral-400'}>
+                            <div className="text-neutral-700">
                                 {isVideoType ? (
                                     isLocalModel ? <><Film size={40} /><HardDrive size={16} className="absolute -bottom-1 -right-1 text-purple-400" /></> : <Film size={40} />
                                 ) : (

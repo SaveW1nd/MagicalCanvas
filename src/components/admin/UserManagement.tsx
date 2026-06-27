@@ -118,22 +118,22 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
 
     return (
         <div className="max-w-6xl">
-            <h2 className="text-lg font-semibold text-neutral-900 dark:text-white mb-4">用户管理</h2>
+            <h2 className="text-lg font-semibold text-white mb-4">用户管理</h2>
 
             {/* Create */}
-            <form onSubmit={create} className="flex flex-wrap items-end gap-3 mb-5 p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+            <form onSubmit={create} className="flex flex-wrap items-end gap-3 mb-5 p-4 rounded-xl bg-neutral-900 border border-neutral-800">
                 <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-400 dark:text-neutral-500">用户名</span>
+                    <span className="text-[11px] text-neutral-500">用户名</span>
                     <input required value={username} onChange={e => setUsername(e.target.value)} placeholder="登录用户名"
-                        className="bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500/60 w-52" />
+                        className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-52" />
                 </div>
                 <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-400 dark:text-neutral-500">密码</span>
+                    <span className="text-[11px] text-neutral-500">密码</span>
                     <input type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="留空=默认 12345678"
-                        className="bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500/60 w-48" />
+                        className="bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500/60 w-48" />
                 </div>
                 <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-400 dark:text-neutral-500">角色</span>
+                    <span className="text-[11px] text-neutral-500">角色</span>
                     <Select
                         value={role}
                         onChange={v => setRole(v as 'user' | 'admin')}
@@ -149,11 +149,11 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
 
             {/* Table */}
             {loading ? (
-                <div className="flex items-center gap-2 text-neutral-400 dark:text-neutral-500 text-sm py-8"><Loader2 size={16} className="animate-spin" /> 加载中…</div>
+                <div className="flex items-center gap-2 text-neutral-500 text-sm py-8"><Loader2 size={16} className="animate-spin" /> 加载中…</div>
             ) : (
-                <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                <div className="rounded-xl border border-neutral-800 overflow-hidden">
                     <table className="w-full text-sm">
-                        <thead className="bg-neutral-50 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400 text-xs">
+                        <thead className="bg-neutral-900 text-neutral-400 text-xs">
                             <tr>
                                 <th className="text-left font-medium px-4 py-2.5">用户</th>
                                 <th className="text-left font-medium px-4 py-2.5">角色</th>
@@ -164,29 +164,29 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                         </thead>
                         <tbody>
                             {users.map(u => (
-                                <tr key={u.id} className="border-t border-neutral-200 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200">
+                                <tr key={u.id} className="border-t border-neutral-800 text-neutral-200">
                                     <td className="px-4 py-2.5 font-medium">{u.username}{u.id === currentUserId && <span className="ml-1 text-[10px] text-blue-400">(我)</span>}</td>
-                                    <td className="px-4 py-2.5"><span className={u.role === 'admin' ? 'text-amber-400' : 'text-neutral-500 dark:text-neutral-400'}>{u.role === 'admin' ? '管理员' : '普通用户'}</span></td>
+                                    <td className="px-4 py-2.5"><span className={u.role === 'admin' ? 'text-amber-400' : 'text-neutral-400'}>{u.role === 'admin' ? '管理员' : '普通用户'}</span></td>
                                     <td className="px-4 py-2.5"><span className={u.status === 'active' ? 'text-green-400' : 'text-red-400'}>{u.status === 'active' ? '正常' : '已禁用'}</span></td>
-                                    <td className="px-4 py-2.5 text-[11px] text-neutral-400 dark:text-neutral-500">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
+                                    <td className="px-4 py-2.5 text-[11px] text-neutral-500">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
                                     <td className="px-4 py-2.5">
                                         <div className="flex items-center justify-end gap-1.5">
                                             <Tip label={u.role === 'admin' ? '降为普通用户' : '升为管理员'}>
-                                                <button onClick={() => askToggleRole(u)} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white">
+                                                <button onClick={() => askToggleRole(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white">
                                                     {u.role === 'admin' ? <ShieldOff size={15} /> : <ShieldCheck size={15} />}
                                                 </button>
                                             </Tip>
                                             <Tip label={u.status === 'active' ? '禁用' : '启用'}>
-                                                <button onClick={() => askToggleStatus(u)} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white">
+                                                <button onClick={() => askToggleStatus(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white">
                                                     {u.status === 'active' ? <Ban size={15} /> : <CheckCircle2 size={15} />}
                                                 </button>
                                             </Tip>
                                             <Tip label="重置密码">
-                                                <button onClick={() => setResetUser(u)} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"><KeyRound size={15} /></button>
+                                                <button onClick={() => setResetUser(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white"><KeyRound size={15} /></button>
                                             </Tip>
                                             <Tip label={u.id === currentUserId ? '不能删除自己' : '删除'}>
                                                 <button onClick={() => askDelete(u)} disabled={u.id === currentUserId}
-                                                    className="p-1.5 rounded hover:bg-red-500/20 text-neutral-500 dark:text-neutral-400 hover:text-red-400 disabled:opacity-30 disabled:hover:bg-transparent"><Trash2 size={15} /></button>
+                                                    className="p-1.5 rounded hover:bg-red-500/20 text-neutral-400 hover:text-red-400 disabled:opacity-30 disabled:hover:bg-transparent"><Trash2 size={15} /></button>
                                             </Tip>
                                         </div>
                                     </td>
