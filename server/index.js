@@ -791,7 +791,8 @@ app.post('/api/public-workflows', async (req, res) => {
         const srcPath = path.join(WORKFLOWS_DIR, `${workflowId}.json`);
         if (!fs.existsSync(srcPath)) return res.status(404).json({ error: '工作流不存在' });
         const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
-        if (!canAccess(src.ownerId, req.user)) return res.status(403).json({ error: '无权发布该工作流' });
+        // 本人可发布自己的;管理员可发布任意用户的(从「全部历史」)
+        if (!canAccess(src.ownerId, req.user) && req.user.role !== 'admin') return res.status(403).json({ error: '无权发布该工作流' });
         const newId = crypto.randomUUID();
         const pub = { ...src, id: newId, sourceWorkflowId: workflowId, publishedBy: req.user.id, publishedAt: new Date().toISOString(), source: 'user' };
         delete pub.ownerId;

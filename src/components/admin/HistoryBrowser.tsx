@@ -5,9 +5,10 @@
  * 数据来自 GET /api/admin/history（requireAdmin）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, RefreshCw, Image as ImageIcon, Film, MessageSquare, LayoutGrid, Scissors, ExternalLink } from 'lucide-react';
+import { Loader2, Search, RefreshCw, Image as ImageIcon, Film, MessageSquare, LayoutGrid, Scissors, ExternalLink, Globe, Check } from 'lucide-react';
 import { showToast } from '../Toast';
 import { Select } from '../ui/Select';
+import { Tip } from '../ui/Tip';
 
 interface HistoryItem {
     id: string;
@@ -70,11 +71,37 @@ export const HistoryBrowser: React.FC = () => {
     const [q, setQ] = useState('');
     const [debouncedQ, setDebouncedQ] = useState('');
     const [offset, setOffset] = useState(0);
+    const [published, setPublished] = useState<Set<string>>(new Set());
+    const [publishingKey, setPublishingKey] = useState<string | null>(null);
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
         return () => clearTimeout(t);
     }, [q]);
+
+    // 把历史里的素材(图片/视频)发布到公共素材库,或把画布(工作流)发布到公共工作流
+    const itemKey = (it: HistoryItem) => `${it.type}-${it.id}`;
+    const handlePublish = async (it: HistoryItem) => {
+        const k = itemKey(it);
+        if (publishingKey) return;
+        setPublishingKey(k);
+        try {
+            const isWf = it.type === 'workflows';
+            const res = await fetch(isWf ? '/api/public-workflows' : '/api/admin/assets/publish', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(isWf ? { workflowId: it.id } : { type: it.type, id: it.id }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || '发布失败');
+            setPublished(prev => new Set(prev).add(k));
+            showToast(isWf ? '已发布到公共工作流' : '已发布到公共素材库', 'success');
+        } catch (e) {
+            showToast(e instanceof Error ? e.message : '发布失败', 'error');
+        } finally {
+            setPublishingKey(null);
+        }
+    };
 
     // 筛选条件变化时回到第一页
     useEffect(() => { setOffset(0); }, [userId, type, debouncedQ]);
@@ -168,13 +195,31 @@ export const HistoryBrowser: React.FC = () => {
                                     <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] text-neutral-200 backdrop-blur-sm">
                                         {tm.icon}{tm.label}
                                     </span>
-                                    {it.url && (it.type === 'images' || it.type === 'videos') && (
-                                        <a href={mediaUrl(it.url)} target="_blank" rel="noreferrer"
-                                            className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                                            title="新标签打开">
-                                            <ExternalLink size={12} />
-                                        </a>
-                                    )}
+                                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {/* 发布到公共(图片/视频→公共素材库;画布→公共工作流) */}
+                                        {(it.type === 'images' || it.type === 'videos' || it.type === 'workflows') && (
+                                            published.has(itemKey(it)) ? (
+                                                <Tip label="已发布到公共">
+                                                    <span className="p-1 rounded-md bg-green-600/80 text-white backdrop-blur-sm"><Check size={12} /></span>
+                                                </Tip>
+                                            ) : (
+                                                <Tip label={it.type === 'workflows' ? '发布到公共工作流' : '发布到公共素材库'}>
+                                                    <button onClick={() => handlePublish(it)} disabled={publishingKey === itemKey(it)}
+                                                        className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white hover:bg-green-600/80 backdrop-blur-sm transition-colors disabled:opacity-50">
+                                                        {publishingKey === itemKey(it) ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                                                    </button>
+                                                </Tip>
+                                            )
+                                        )}
+                                        {it.url && (it.type === 'images' || it.type === 'videos') && (
+                                            <Tip label="新标签打开">
+                                                <a href={mediaUrl(it.url)} target="_blank" rel="noreferrer"
+                                                    className="block p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm">
+                                                    <ExternalLink size={12} />
+                                                </a>
+                                            </Tip>
+                                        )}
+                                    </div>
                                 </div>
                                 {/* 信息区 */}
                                 <div className="p-2.5 flex flex-col gap-1 min-w-0">

@@ -7,6 +7,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
     listUsers, getUserById, getUserByUsername, createUser, updateUser, deleteUser,
     countActiveAdmins, publicUser,
@@ -364,6 +365,47 @@ router.delete('/assets/:id', (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error('admin delete asset error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 从「全部历史」把一张生成图/视频发布到公共素材库(引用模型,零拷贝;幂等)
+router.post('/assets/publish', (req, res) => {
+    try {
+        const { type, id } = req.body || {};
+        if (!['images', 'videos'].includes(type) || !id) return res.status(400).json({ error: '参数错误' });
+        const LIBRARY_DIR = req.app.locals.LIBRARY_DIR;
+        const metaPath = path.join(LIBRARY_DIR, type, `${id}.json`);
+        if (!fs.existsSync(metaPath)) return res.status(404).json({ error: '历史素材不存在' });
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const url = meta.url || `/library/${type}/${meta.filename}`;
+        const rows = readAssets(req);
+        // 幂等:已有指向同一文件的素材行 → 直接置为 public
+        let row = rows.find(a => a.url === url);
+        if (row) {
+            row.visibility = 'public';
+            row.publishedAt = row.publishedAt || new Date().toISOString();
+            row.publishedBy = row.publishedBy || req.user.id;
+        } else {
+            row = {
+                id: crypto.randomUUID(),
+                ownerId: meta.ownerId || null,
+                name: meta.title || meta.prompt || '未命名',
+                category: 'Others',
+                url,
+                type: type === 'videos' ? 'video' : 'image',
+                visibility: 'public',
+                sourceAssetId: null,
+                publishedBy: req.user.id,
+                publishedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+            };
+            rows.push(row);
+        }
+        writeAssets(req, rows);
+        res.json({ success: true, asset: row });
+    } catch (e) {
+        console.error('admin publish media error:', e);
         res.status(500).json({ error: e.message });
     }
 });
