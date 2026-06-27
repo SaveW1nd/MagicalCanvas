@@ -41,8 +41,9 @@ const VIDEOS_DIR = path.join(LIBRARY_DIR, 'videos');
 const CHATS_DIR = path.join(LIBRARY_DIR, 'chats');
 const LIBRARY_ASSETS_DIR = path.join(LIBRARY_DIR, 'assets');
 const EDIT_PROJECTS_DIR = path.join(LIBRARY_DIR, 'edit-projects');
+const PUBLIC_WORKFLOWS_DIR = path.join(LIBRARY_DIR, 'public-workflows'); // 用户发布的公共工作流(JSON + assets/{id}/)
 
-[LIBRARY_DIR, WORKFLOWS_DIR, IMAGES_DIR, VIDEOS_DIR, CHATS_DIR, LIBRARY_ASSETS_DIR, EDIT_PROJECTS_DIR].forEach(dir => {
+[LIBRARY_DIR, WORKFLOWS_DIR, IMAGES_DIR, VIDEOS_DIR, CHATS_DIR, LIBRARY_ASSETS_DIR, EDIT_PROJECTS_DIR, PUBLIC_WORKFLOWS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -701,71 +702,142 @@ app.post('/api/workflows', async (req, res) => {
 
 // List public workflows (shipped with the repo in public/workflows/)
 // Dynamically scans directory - no need to maintain index.json manually
+const BUNDLED_WORKFLOWS_DIR = path.join(__dirname, '..', 'public', 'workflows');
+
+/**
+ * 把工作流引用的图片(节点 resultUrl/lastFrame/editorCanvasData/editorBackgroundUrl + 顶层 coverUrl)
+ * 复制到 destAbsDir,并把 URL 重写为 destUrlPrefix/新文件名。源缺失则保留原 URL。
+ * 用于「发布到公共」「fork 到个人」——工作流是文档,跨边界深拷贝(含图片),各自独立。
+ */
+function copyWorkflowMedia(workflow, destAbsDir, destUrlPrefix) {
+    fs.mkdirSync(destAbsDir, { recursive: true });
+    const FIELDS = ['resultUrl', 'lastFrame', 'editorCanvasData', 'editorBackgroundUrl'];
+    const copyOne = (url) => {
+        if (!url || typeof url !== 'string' || !url.startsWith('/library/')) return url;
+        const src = libUrlToPath(LIBRARY_DIR, url);
+        if (!src || !fs.existsSync(src)) return url;
+        const ext = path.extname(src) || '.png';
+        const fname = `${crypto.randomUUID()}${ext}`;
+        try { fs.copyFileSync(src, path.join(destAbsDir, fname)); } catch { return url; }
+        return `${destUrlPrefix}/${fname}`;
+    };
+    if (Array.isArray(workflow.nodes)) {
+        workflow.nodes = workflow.nodes.map(n => {
+            const c = { ...n };
+            for (const f of FIELDS) if (c[f]) c[f] = copyOne(c[f]);
+            return c;
+        });
+    }
+    if (workflow.coverUrl) workflow.coverUrl = copyOne(workflow.coverUrl);
+    return workflow;
+}
+
+function summarizePublicWorkflow(workflow, id, source) {
+    const nodeTypes = workflow.nodes?.reduce((acc, n) => { acc[n.type] = (acc[n.type] || 0) + 1; return acc; }, {}) || {};
+    const typesSummary = Object.entries(nodeTypes).map(([t, c]) => `${c} ${t}${c > 1 ? 's' : ''}`).join(', ');
+    return {
+        id,
+        title: workflow.title || 'Untitled Workflow',
+        description: workflow.description || (typesSummary ? `Workflow with ${typesSummary}` : 'A public workflow template'),
+        nodeCount: workflow.nodes?.length || 0,
+        coverUrl: workflow.coverUrl || null,
+        source,
+        publishedBy: workflow.publishedBy || null,
+        publishedAt: workflow.publishedAt || null,
+    };
+}
+
+// 列公共工作流:合并「仓库同梱」+「用户发布」
 app.get('/api/public-workflows', async (req, res) => {
     try {
-        const publicWorkflowsDir = path.join(__dirname, '..', 'public', 'workflows');
-
-        if (!fs.existsSync(publicWorkflowsDir)) {
-            return res.json([]);
-        }
-
-        // Scan all .json files except index.json
-        const files = fs.readdirSync(publicWorkflowsDir)
-            .filter(f => f.endsWith('.json') && f !== 'index.json');
-
-        const workflows = files.map(file => {
-            try {
-                const content = fs.readFileSync(path.join(publicWorkflowsDir, file), 'utf8');
-                const workflow = JSON.parse(content);
-
-                // Generate description from workflow content
-                const nodeTypes = workflow.nodes?.reduce((acc, n) => {
-                    acc[n.type] = (acc[n.type] || 0) + 1;
-                    return acc;
-                }, {}) || {};
-                const typesSummary = Object.entries(nodeTypes)
-                    .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
-                    .join(', ');
-                const description = workflow.description ||
-                    (typesSummary ? `Workflow with ${typesSummary}` : 'A public workflow template');
-
-                return {
-                    id: file.replace('.json', ''),
-                    title: workflow.title || 'Untitled Workflow',
-                    description,
-                    nodeCount: workflow.nodes?.length || 0,
-                    coverUrl: workflow.coverUrl || null
-                };
-            } catch (parseError) {
-                console.warn(`Skipping invalid workflow file: ${file}`, parseError.message);
-                return null;
+        const out = [];
+        if (fs.existsSync(BUNDLED_WORKFLOWS_DIR)) {
+            for (const f of fs.readdirSync(BUNDLED_WORKFLOWS_DIR).filter(x => x.endsWith('.json') && x !== 'index.json')) {
+                try { out.push(summarizePublicWorkflow(JSON.parse(fs.readFileSync(path.join(BUNDLED_WORKFLOWS_DIR, f), 'utf8')), f.replace('.json', ''), 'bundled')); } catch { /* skip */ }
             }
-        }).filter(Boolean); // Remove any null entries from parse errors
-
-        // Sort by title alphabetically
-        workflows.sort((a, b) => a.title.localeCompare(b.title));
-
-        res.json(workflows);
+        }
+        if (fs.existsSync(PUBLIC_WORKFLOWS_DIR)) {
+            for (const f of fs.readdirSync(PUBLIC_WORKFLOWS_DIR).filter(x => x.endsWith('.json'))) {
+                try { out.push(summarizePublicWorkflow(JSON.parse(fs.readFileSync(path.join(PUBLIC_WORKFLOWS_DIR, f), 'utf8')), f.replace('.json', ''), 'user')); } catch { /* skip */ }
+            }
+        }
+        out.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || '') || a.title.localeCompare(b.title));
+        res.json(out);
     } catch (error) {
         console.error("List public workflows error:", error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// Load specific public workflow
+// 读单个公共工作流(用户发布优先,回退仓库同梱)
 app.get('/api/public-workflows/:id', async (req, res) => {
     try {
-        const publicWorkflowsDir = path.join(__dirname, '..', 'public', 'workflows');
-        const filePath = path.join(publicWorkflowsDir, `${req.params.id}.json`);
-
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: "Public workflow not found" });
-        }
-
-        const content = fs.readFileSync(filePath, 'utf8');
-        res.json(JSON.parse(content));
+        const userPath = path.join(PUBLIC_WORKFLOWS_DIR, `${req.params.id}.json`);
+        const bundledPath = path.join(BUNDLED_WORKFLOWS_DIR, `${req.params.id}.json`);
+        const filePath = fs.existsSync(userPath) ? userPath : bundledPath;
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Public workflow not found" });
+        res.json(JSON.parse(fs.readFileSync(filePath, 'utf8')));
     } catch (error) {
         console.error("Load public workflow error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 发布本人工作流到公共(深拷贝 JSON + 复制引用图片到 public assets)
+app.post('/api/public-workflows', async (req, res) => {
+    try {
+        const { workflowId } = req.body || {};
+        if (!workflowId) return res.status(400).json({ error: '缺少 workflowId' });
+        const srcPath = path.join(WORKFLOWS_DIR, `${workflowId}.json`);
+        if (!fs.existsSync(srcPath)) return res.status(404).json({ error: '工作流不存在' });
+        const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
+        if (!canAccess(src.ownerId, req.user)) return res.status(403).json({ error: '无权发布该工作流' });
+        const newId = crypto.randomUUID();
+        const pub = { ...src, id: newId, sourceWorkflowId: workflowId, publishedBy: req.user.id, publishedAt: new Date().toISOString(), source: 'user' };
+        delete pub.ownerId;
+        copyWorkflowMedia(pub, path.join(PUBLIC_WORKFLOWS_DIR, 'assets', newId), `/library/public-workflows/assets/${newId}`);
+        fs.writeFileSync(path.join(PUBLIC_WORKFLOWS_DIR, `${newId}.json`), JSON.stringify(pub, null, 2));
+        res.status(201).json({ success: true, id: newId });
+    } catch (error) {
+        console.error("Publish workflow error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// fork 公共工作流到本人(深拷贝 JSON + 复制引用图片到本人空间,彻底解耦)
+app.post('/api/workflows/fork', async (req, res) => {
+    try {
+        const { publicId } = req.body || {};
+        if (!publicId) return res.status(400).json({ error: '缺少 publicId' });
+        const userPath = path.join(PUBLIC_WORKFLOWS_DIR, `${publicId}.json`);
+        const bundledPath = path.join(BUNDLED_WORKFLOWS_DIR, `${publicId}.json`);
+        const filePath = fs.existsSync(userPath) ? userPath : bundledPath;
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: '公共工作流不存在' });
+        const src = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const newId = crypto.randomUUID();
+        const fork = { ...src, id: newId, ownerId: req.user.id, title: src.title || '未命名', forkedFrom: publicId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        delete fork.publishedBy; delete fork.publishedAt; delete fork.source; delete fork.sourceWorkflowId;
+        copyWorkflowMedia(fork, path.join(LIBRARY_DIR, 'users', req.user.id, 'wf-assets', newId), `/library/users/${req.user.id}/wf-assets/${newId}`);
+        fs.writeFileSync(path.join(WORKFLOWS_DIR, `${newId}.json`), JSON.stringify(fork, null, 2));
+        res.status(201).json({ success: true, id: newId });
+    } catch (error) {
+        console.error("Fork workflow error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 删除公共工作流(仅管理员;仓库同梱不可删)
+app.delete('/api/public-workflows/:id', async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可删除公共工作流' });
+        const filePath = path.join(PUBLIC_WORKFLOWS_DIR, `${req.params.id}.json`);
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: '公共工作流不存在(仓库同梱的不可删)' });
+        fs.unlinkSync(filePath);
+        const assetsDir = path.join(PUBLIC_WORKFLOWS_DIR, 'assets', req.params.id);
+        if (fs.existsSync(assetsDir)) fs.rmSync(assetsDir, { recursive: true, force: true });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Delete public workflow error:", error);
         res.status(500).json({ error: error.message });
     }
 });

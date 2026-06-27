@@ -14,6 +14,7 @@ import {
 
 const DEFAULT_PASSWORD = '12345678';
 import { hashPassword } from '../auth/passwords.js';
+import { libUrlToPath } from '../utils/imageHelpers.js';
 import { requireAdmin } from '../auth/middleware.js';
 import {
     listProviders, getProvider, createProvider, updateProvider, deleteProvider,
@@ -294,6 +295,117 @@ router.get('/history', (req, res) => {
         res.json({ items: page, total, hasMore: offset + limit < total, users, typeCounts });
     } catch (e) {
         console.error('admin history error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- 管理员·素材库管理(计划 4) ---
+function assetsJsonPath(req) { return path.join(req.app.locals.LIBRARY_DIR, 'assets', 'assets.json'); }
+function readAssets(req) {
+    const p = assetsJsonPath(req);
+    if (!fs.existsSync(p)) return [];
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return []; }
+}
+function writeAssets(req, rows) { fs.writeFileSync(assetsJsonPath(req), JSON.stringify(rows, null, 2)); }
+
+// 全表素材 + ownerName,支持按用户/可见性/分类/关键词筛选
+router.get('/assets', (req, res) => {
+    try {
+        const users = listUsers();
+        const nameById = new Map(users.map(u => [u.id, u.username]));
+        let rows = readAssets(req).map(a => ({ ...a, ownerName: a.ownerId ? (nameById.get(a.ownerId) || '(已删除用户)') : '(无归属)' }));
+        const categories = Array.from(new Set(rows.map(a => a.category).filter(Boolean)));
+        const { userId, visibility, category } = req.query;
+        const q = String(req.query.q || '').trim().toLowerCase();
+        if (userId) rows = rows.filter(a => a.ownerId === userId);
+        if (visibility) rows = rows.filter(a => (a.visibility || 'private') === visibility);
+        if (category) rows = rows.filter(a => a.category === category);
+        if (q) rows = rows.filter(a => (a.name || '').toLowerCase().includes(q) || (a.ownerName || '').toLowerCase().includes(q));
+        rows.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        res.json({ assets: rows, total: rows.length, users, categories });
+    } catch (e) {
+        console.error('admin assets list error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 强制设置可见性(公开/下架任意素材)
+router.post('/assets/:id/visibility', (req, res) => {
+    try {
+        const visibility = req.body?.visibility === 'public' ? 'public' : 'private';
+        const rows = readAssets(req);
+        const asset = rows.find(a => a.id === req.params.id);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        asset.visibility = visibility;
+        if (visibility === 'public') { asset.publishedAt = asset.publishedAt || new Date().toISOString(); asset.publishedBy = asset.publishedBy || asset.ownerId; }
+        writeAssets(req, rows);
+        res.json({ success: true, asset });
+    } catch (e) {
+        console.error('admin set visibility error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 管理员删除素材(物理文件经引用护栏:被他人/公开引用则只删行)
+router.delete('/assets/:id', (req, res) => {
+    try {
+        const rows = readAssets(req);
+        const idx = rows.findIndex(a => a.id === req.params.id);
+        if (idx === -1) return res.status(404).json({ error: 'Asset not found' });
+        const asset = rows[idx];
+        rows.splice(idx, 1);
+        const isUploaded = typeof asset.url === 'string' && asset.url.includes('/assets/');
+        const referencedElsewhere = rows.some(a => a.url === asset.url);
+        if (!asset.sourceAssetId && isUploaded && !referencedElsewhere) {
+            const fp = libUrlToPath(req.app.locals.LIBRARY_DIR, asset.url);
+            if (fp && fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch { /* ignore */ } }
+        }
+        writeAssets(req, rows);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('admin delete asset error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 列用户发布的公共工作流 + ownerName
+router.get('/public-workflows', (req, res) => {
+    try {
+        const dir = path.join(req.app.locals.LIBRARY_DIR, 'public-workflows');
+        if (!fs.existsSync(dir)) return res.json({ workflows: [] });
+        const nameById = new Map(listUsers().map(u => [u.id, u.username]));
+        const workflows = [];
+        for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.json'))) {
+            try {
+                const w = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+                workflows.push({
+                    id: f.replace('.json', ''), title: w.title || '未命名',
+                    nodeCount: w.nodes?.length || 0, coverUrl: w.coverUrl || null,
+                    publishedBy: w.publishedBy || null, publishedByName: w.publishedBy ? (nameById.get(w.publishedBy) || '(已删除用户)') : '(未知)',
+                    publishedAt: w.publishedAt || null,
+                });
+            } catch { /* skip */ }
+        }
+        workflows.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+        res.json({ workflows });
+    } catch (e) {
+        console.error('admin public-workflows list error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 删除某公共工作流 + 其 assets 目录
+router.delete('/public-workflows/:id', (req, res) => {
+    try {
+        const dir = path.join(req.app.locals.LIBRARY_DIR, 'public-workflows');
+        const fp = path.join(dir, `${req.params.id}.json`);
+        if (!fs.existsSync(fp)) return res.status(404).json({ error: '公共工作流不存在' });
+        fs.unlinkSync(fp);
+        const assetsDir = path.join(dir, 'assets', req.params.id);
+        if (fs.existsSync(assetsDir)) fs.rmSync(assetsDir, { recursive: true, force: true });
+        res.json({ success: true });
+    } catch (e) {
+        console.error('admin delete public-workflow error:', e);
         res.status(500).json({ error: e.message });
     }
 });
