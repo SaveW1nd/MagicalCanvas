@@ -11,21 +11,6 @@ import { CharacterAsset, SceneScript, StoryboardState } from '../../hooks/useSto
 import { StoryInput } from '../StoryInput';
 
 // ============================================================================
-// IMAGE MODELS (Copied from NodeControls.tsx for model selection)
-// ============================================================================
-
-const IMAGE_MODELS = [
-    { id: 'nano-banana-pro', name: 'Nano Banana Pro', provider: 'gpt2api' },
-    { id: 'nano-banana-v2', name: 'Nano Banana V2', provider: 'gpt2api' },
-    { id: 'nano-banana', name: 'Nano Banana', provider: 'gpt2api' },
-    { id: 'gpt-image-2', name: 'GPT Image 2', provider: 'gpt2api' },
-    { id: 'gpt-image-1.5', name: 'GPT Image 1.5', provider: 'openai' },
-    { id: 'gemini-pro', name: 'Nano Banana Pro (Gemini)', provider: 'google' },
-    { id: 'kling-v1-5', name: 'Kling V1.5', provider: 'kling' },
-    { id: 'kling-v2-1', name: 'Kling V2.1', provider: 'kling' },
-];
-
-// ============================================================================
 // TYPES
 // ============================================================================
 

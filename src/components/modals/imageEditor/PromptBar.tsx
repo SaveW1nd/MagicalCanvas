@@ -9,6 +9,7 @@ import React, { useRef, useEffect } from 'react';
 import { ChevronDown, Check, Banana, Image as ImageIcon, Crop, Monitor } from 'lucide-react';
 import { ImageModel, IMAGE_MODELS } from './imageEditor.types';
 import { OpenAIIcon, KlingIcon } from '../../icons/BrandIcons';
+import { useModelRegistry } from '../../../hooks/useModelRegistry';
 
 // ============================================================================
 // TYPES
@@ -71,11 +72,21 @@ export const PromptBar: React.FC<PromptBarProps> = ({
     const aspectDropdownRef = useRef<HTMLDivElement>(null);
     const resolutionDropdownRef = useRef<HTMLDivElement>(null);
 
-    // --- Derived State ---
-    const currentModel = IMAGE_MODELS.find(m => m.id === selectedModel) || IMAGE_MODELS[0];
-    const availableModels = hasInputImage
-        ? IMAGE_MODELS.filter(m => m.supportsImageToImage)
+    // --- Models from registry (管理后台→模型配置)，未加载时回退硬编码 ---
+    const registry = useModelRegistry();
+    const models: ImageModel[] = registry.image.length
+        ? registry.image.map(m => ({
+            id: m.id, name: m.name, provider: 'gpt2api',
+            supportsImageToImage: !!m.supportsImageToImage, supportsMultiImage: !!m.supportsMultiImage,
+            recommended: m.recommended, resolutions: m.resolutions || ['1K', '2K'], aspectRatios: m.aspectRatios || ['Auto'],
+        }))
         : IMAGE_MODELS;
+
+    // --- Derived State ---
+    const currentModel = models.find(m => m.id === selectedModel) || models[0];
+    const availableModels = hasInputImage
+        ? models.filter(m => m.supportsImageToImage)
+        : models;
 
     // --- Effects ---
 

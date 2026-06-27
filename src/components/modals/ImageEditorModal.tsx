@@ -11,8 +11,10 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
     ImageEditorModalProps,
     EditorElement,
+    ImageModel,
     IMAGE_MODELS
 } from './imageEditor/imageEditor.types';
+import { useModelRegistry } from '../../hooks/useModelRegistry';
 
 // Custom hooks
 import { useImageEditorHistory } from '../../hooks/useImageEditorHistory';
@@ -263,8 +265,26 @@ export const ImageEditorModal: React.FC<ImageEditorModalProps> = ({
         onCropApply: handleCropApply
     });
 
-    const currentModel = IMAGE_MODELS.find(m => m.id === selectedModel) || IMAGE_MODELS[0];
+    // 模型清单优先取自管理后台配置(/api/models)，未加载时回退硬编码。
+    const registry = useModelRegistry();
+    const imageModels: ImageModel[] = registry.image.length
+        ? registry.image.map(m => ({
+            id: m.id, name: m.name, provider: 'gpt2api',
+            supportsImageToImage: !!m.supportsImageToImage, supportsMultiImage: !!m.supportsMultiImage,
+            recommended: m.recommended, resolutions: m.resolutions || ['1K', '2K'], aspectRatios: m.aspectRatios || ['Auto'],
+        }))
+        : IMAGE_MODELS;
+
+    const currentModel = imageModels.find(m => m.id === selectedModel) || imageModels[0];
     const hasInputImage = !!imageUrl;
+
+    // 注册表加载后，若当前选中的模型已不在清单（如旧节点存的死模型），切到默认。
+    useEffect(() => {
+        if (registry.loaded && imageModels.length && !imageModels.some(m => m.id === selectedModel)) {
+            setSelectedModel(registry.defaults.image || imageModels[0].id);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [registry.loaded]);
 
     // --- Effects ---
 
@@ -420,7 +440,7 @@ export const ImageEditorModal: React.FC<ImageEditorModalProps> = ({
 
     const handleModelChange = (modelId: string) => {
         setSelectedModel(modelId);
-        const newModel = IMAGE_MODELS.find(m => m.id === modelId);
+        const newModel = imageModels.find(m => m.id === modelId);
 
         if (newModel?.aspectRatios && !newModel.aspectRatios.includes(selectedAspectRatio)) {
             setSelectedAspectRatio('Auto');

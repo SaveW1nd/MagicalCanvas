@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Film, Loader2, Play, Check, ChevronDown, Wand2, Trash2 } from 'lucide-react';
 import { NodeData } from '../../types';
-import { GoogleIcon, KlingIcon, HailuoIcon } from '../icons/BrandIcons';
+import { useModelRegistry } from '../../hooks/useModelRegistry';
 
 interface StoryboardVideoModalProps {
     isOpen: boolean;
@@ -33,7 +33,8 @@ interface StoryboardVideoModalProps {
 const VIDEO_DURATIONS = [5, 6, 8, 10];
 const VIDEO_RESOLUTIONS = ["Auto", "1080p", "768p", "720p", "512p"];
 
-const VIDEO_MODELS = [
+// 兜底清单：注册表(/api/models)未加载或为空时使用。
+const VIDEO_MODELS_FALLBACK = [
     // gpt2api.com 视频模型
     { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', recommended: true, durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'veo3.1', name: 'VEO 3.1', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
@@ -69,6 +70,16 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
     onCreateVideos,
     storyContext
 }) => {
+    // 视频模型清单优先取自管理后台配置(/api/models)，未加载时回退兜底常量。
+    const registry = useModelRegistry();
+    const VIDEO_MODELS = registry.video.length
+        ? registry.video.map(m => ({
+            id: m.id, name: m.name, provider: 'gpt2api', recommended: m.recommended,
+            durations: m.durations && m.durations.length ? m.durations : [5],
+            resolutions: m.resolutions && m.resolutions.length ? m.resolutions : ['720p', '1080p'],
+        }))
+        : VIDEO_MODELS_FALLBACK;
+
     // Track removed scenes (locally within modal session)
     const [removedSceneIds, setRemovedSceneIds] = useState<Set<string>>(new Set());
 
@@ -139,6 +150,15 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
             setSettings(prev => ({ ...prev, duration: model.durations[0] }));
         }
     }, []); // Only run once on mount
+
+    // 注册表加载后，若当前模型不在清单（默认值或旧死模型），切到注册表默认。
+    useEffect(() => {
+        if (registry.loaded && VIDEO_MODELS.length && !VIDEO_MODELS.some(m => m.id === settings.model)) {
+            const def = VIDEO_MODELS.find(m => m.id === registry.defaults.video) || VIDEO_MODELS[0];
+            setSettings(prev => ({ ...prev, model: def.id, duration: def.durations.includes(prev.duration) ? prev.duration : def.durations[0] }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [registry.loaded]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -405,22 +425,17 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
                                         className="flex items-center gap-2 bg-neutral-800 text-white text-xs px-3 py-2 rounded-lg border border-neutral-700 hover:bg-neutral-700 transition-colors min-w-[160px] justify-between"
                                     >
                                         <div className="flex items-center gap-2">
-                                            {currentModel.id === 'veo-3.1' ? <GoogleIcon size={14} className="text-white" /> :
-                                                currentModel.provider === 'kling' ? <KlingIcon size={16} /> :
-                                                    currentModel.provider === 'hailuo' ? <HailuoIcon size={16} /> :
-                                                        <Film size={14} />}
+                                            <Film size={14} />
                                             <span>{currentModel.name}</span>
                                         </div>
                                         <ChevronDown size={14} className="opacity-50" />
                                     </button>
 
-                                    {/* Dropdown */}
+                                    {/* Dropdown — 单列(注册表里的可用模型) */}
                                     {showModelDropdown && (
                                         <div className="absolute bottom-full mb-2 left-0 w-64 bg-[#1f1f1f] border border-neutral-700 rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col max-h-[400px] overflow-y-auto">
-
-                                            {/* gpt2api */}
-                                            <div className="px-3 py-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1a1a1a]">gpt2api</div>
-                                            {VIDEO_MODELS.filter(m => m.provider === 'gpt2api').map(model => (
+                                            <div className="px-3 py-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1a1a1a]">视频模型</div>
+                                            {VIDEO_MODELS.map(model => (
                                                 <button
                                                     key={model.id}
                                                     onClick={() => handleModelChange(model.id)}
@@ -432,57 +447,6 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
                                                         {model.recommended && (
                                                             <span className="text-[9px] px-1 py-0.5 bg-green-500/20 text-green-400 rounded font-medium">REC</span>
                                                         )}
-                                                    </div>
-                                                    {settings.model === model.id && <Check size={14} />}
-                                                </button>
-                                            ))}
-
-                                            {/* Google */}
-                                            <div className="px-3 py-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1a1a1a] border-t border-neutral-700">Google</div>
-                                            {VIDEO_MODELS.filter(m => m.provider === 'google').map(model => (
-                                                <button
-                                                    key={model.id}
-                                                    onClick={() => handleModelChange(model.id)}
-                                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-[#2a2a2a] transition-colors ${settings.model === model.id ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-300'}`}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <GoogleIcon size={14} className={settings.model === model.id ? 'text-blue-400' : 'text-neutral-400'} />
-                                                        {model.name}
-                                                    </div>
-                                                    {settings.model === model.id && <Check size={14} />}
-                                                </button>
-                                            ))}
-
-                                            {/* Kling */}
-                                            <div className="px-3 py-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1a1a1a] border-t border-neutral-700">Kling AI</div>
-                                            {VIDEO_MODELS.filter(m => m.provider === 'kling').map(model => (
-                                                <button
-                                                    key={model.id}
-                                                    onClick={() => handleModelChange(model.id)}
-                                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-[#2a2a2a] transition-colors ${settings.model === model.id ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-300'}`}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <KlingIcon size={16} />
-                                                        {model.name}
-                                                        {model.recommended && (
-                                                            <span className="text-[9px] px-1 py-0.5 bg-green-500/20 text-green-400 rounded font-medium">REC</span>
-                                                        )}
-                                                    </div>
-                                                    {settings.model === model.id && <Check size={14} />}
-                                                </button>
-                                            ))}
-
-                                            {/* Hailuo */}
-                                            <div className="px-3 py-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider bg-[#1a1a1a] border-t border-neutral-700">Hailuo AI</div>
-                                            {VIDEO_MODELS.filter(m => m.provider === 'hailuo').map(model => (
-                                                <button
-                                                    key={model.id}
-                                                    onClick={() => handleModelChange(model.id)}
-                                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-[#2a2a2a] transition-colors ${settings.model === model.id ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-300'}`}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <HailuoIcon size={16} />
-                                                        {model.name}
                                                     </div>
                                                     {settings.model === model.id && <Check size={14} />}
                                                 </button>
