@@ -20,6 +20,8 @@ import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
 import { requireAuth } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
+import { canAccess } from './auth/ownership.js';
+import { migrateOwnership } from './db/migrate-ownership.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -583,16 +585,23 @@ app.post('/api/workflows', async (req, res) => {
 
         const filePath = path.join(WORKFLOWS_DIR, `${workflow.id}.json`);
 
-        // Preserve existing coverUrl if it exists
+        // Ownership: preserve cover + enforce that you only overwrite your own.
         if (fs.existsSync(filePath)) {
             try {
                 const existingData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                if (!canAccess(existingData.ownerId, req.user)) {
+                    return res.status(403).json({ error: '无权修改该工作流' });
+                }
                 if (existingData.coverUrl) {
                     workflow.coverUrl = existingData.coverUrl;
                 }
+                workflow.ownerId = existingData.ownerId || req.user.id;
             } catch (readError) {
                 console.warn("Could not read existing workflow to preserve cover:", readError);
+                workflow.ownerId = req.user.id;
             }
+        } else {
+            workflow.ownerId = req.user.id;
         }
 
         // Sanitize nodes: convert any base64 data to file URLs before saving
@@ -692,6 +701,7 @@ app.get('/api/workflows', async (req, res) => {
         const workflows = files.map(file => {
             const content = fs.readFileSync(path.join(WORKFLOWS_DIR, file), 'utf8');
             const workflow = JSON.parse(content);
+            if (!canAccess(workflow.ownerId, req.user)) return null; // 仅本人可见
             return {
                 id: workflow.id,
                 title: workflow.title,
@@ -700,7 +710,7 @@ app.get('/api/workflows', async (req, res) => {
                 nodeCount: workflow.nodes?.length || 0,
                 coverUrl: workflow.coverUrl
             };
-        });
+        }).filter(Boolean);
         workflows.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
         res.json(workflows);
     } catch (error) {
@@ -717,7 +727,11 @@ app.get('/api/workflows/:id', async (req, res) => {
             return res.status(404).json({ error: "Workflow not found" });
         }
         const content = fs.readFileSync(filePath, 'utf8');
-        res.json(JSON.parse(content));
+        const workflow = JSON.parse(content);
+        if (!canAccess(workflow.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权访问该工作流' });
+        }
+        res.json(workflow);
     } catch (error) {
         console.error("Load workflow error:", error);
         res.status(500).json({ error: error.message });
@@ -731,6 +745,12 @@ app.delete('/api/workflows/:id', async (req, res) => {
         if (!fs.existsSync(filePath)) {
             return res.status(404).json({ error: "Workflow not found" });
         }
+        try {
+            const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            if (!canAccess(existing.ownerId, req.user)) {
+                return res.status(403).json({ error: '无权删除该工作流' });
+            }
+        } catch { /* corrupt -> allow delete */ }
         fs.unlinkSync(filePath);
         res.json({ success: true });
     } catch (error) {
@@ -750,6 +770,9 @@ app.put('/api/workflows/:id/cover', async (req, res) => {
         }
 
         const workflowData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        if (!canAccess(workflowData.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权修改该工作流' });
+        }
         workflowData.coverUrl = coverUrl;
         fs.writeFileSync(filePath, JSON.stringify(workflowData, null, 2));
 
@@ -1150,6 +1173,7 @@ app.get('/api/edit-projects', (req, res) => {
             if (!file.endsWith('.json')) continue;
             try {
                 const p = JSON.parse(fs.readFileSync(path.join(EDIT_PROJECTS_DIR, file), 'utf8'));
+                if (!canAccess(p.ownerId, req.user)) continue; // 仅本人可见
                 list.push({
                     id: p.id,
                     name: p.name,
@@ -1172,7 +1196,9 @@ app.get('/api/edit-projects/:id', (req, res) => {
         const id = sanitizeProjectId(req.params.id);
         const file = path.join(EDIT_PROJECTS_DIR, `${id}.json`);
         if (!fs.existsSync(file)) return res.status(404).json({ error: 'Project not found' });
-        res.json(JSON.parse(fs.readFileSync(file, 'utf8')));
+        const proj = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (!canAccess(proj.ownerId, req.user)) return res.status(403).json({ error: '无权访问该剪辑项目' });
+        res.json(proj);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1188,9 +1214,13 @@ app.post('/api/edit-projects', (req, res) => {
         const projectId = sanitizeProjectId(id) || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const file = path.join(EDIT_PROJECTS_DIR, `${projectId}.json`);
         const existing = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+        if (existing && !canAccess(existing.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权修改该剪辑项目' });
+        }
         const now = new Date().toISOString();
         const project = {
             id: projectId,
+            ownerId: existing?.ownerId || req.user.id,
             name: String(name || existing?.name || '未命名剪辑').slice(0, 80),
             createdAt: existing?.createdAt || now,
             updatedAt: now,
@@ -1209,7 +1239,13 @@ app.delete('/api/edit-projects/:id', (req, res) => {
     try {
         const id = sanitizeProjectId(req.params.id);
         const file = path.join(EDIT_PROJECTS_DIR, `${id}.json`);
-        if (fs.existsSync(file)) fs.unlinkSync(file);
+        if (fs.existsSync(file)) {
+            try {
+                const proj = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (!canAccess(proj.ownerId, req.user)) return res.status(403).json({ error: '无权删除该剪辑项目' });
+            } catch { /* corrupt -> allow delete */ }
+            fs.unlinkSync(file);
+        }
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1503,11 +1539,13 @@ if (process.env.NODE_ENV === 'production') {
     });
 }
 
-// Ensure an initial admin exists (prints credentials on first run).
+// Ensure an initial admin exists (prints credentials on first run),
+// then backfill ownerId on pre-auth data so it stays accessible (P1).
 try {
-    bootstrapAdmin();
+    const adminId = bootstrapAdmin();
+    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR] });
 } catch (e) {
-    console.error('[auth] bootstrap admin failed:', e.message);
+    console.error('[auth] bootstrap/migrate failed:', e.message);
 }
 
 app.listen(PORT, () => {
