@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Upload, Loader2, Plus, Check } from 'lucide-react';
+import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput } from 'lucide-react';
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 
 interface LibraryAsset {
@@ -174,6 +174,21 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         await fetchLibrary();
     };
 
+    // 改某素材分类后，本地更新该行 category
+    const handleChangeCategory = async (id: string, category: string) => {
+        try {
+            const res = await fetch(`/api/library/${id}/category`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category }),
+            });
+            if (!res.ok) { showAppAlert('改分类失败'); return; }
+            setAssets(prev => prev.map(a => a.id === id ? { ...a, category } : a));
+        } catch (_) {
+            showAppAlert('改分类失败');
+        }
+    };
+
     if (!isOpen) return null;
 
     // Theme helper
@@ -209,6 +224,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         categories={categories}
                         onAddCategory={handleAddCategory}
                         onDeleteCategory={handleDeleteCategory}
+                        onChangeCategory={handleChangeCategory}
                     />
                 </div>
                 {/* Click outside to close */}
@@ -248,9 +264,10 @@ const AssetLibraryContent = ({
     selectedCategory, setSelectedCategory,
     assets, loading, onSelectAsset, onDeleteAsset, onDeleteMany, variant, canvasTheme = 'dark',
     importing, onImportClick,
-    categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory
+    categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory, onChangeCategory
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [categoryMenuId, setCategoryMenuId] = useState<string | null>(null);
     const [addingCategory, setAddingCategory] = useState(false);
     const [newCategoryName, setNewCategoryName] = useState('');
     // 批量删除模式：点击素材为勾选而非选用
@@ -450,6 +467,32 @@ const AssetLibraryContent = ({
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 pointer-events-none">
                                     <span className="text-white text-xs font-medium truncate">{asset.name}</span>
                                 </div>
+
+                                {/* 改分类(非多选模式) */}
+                                {!manageMode && (
+                                    <div className="absolute top-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
+                                            onClick={(e) => { e.stopPropagation(); setCategoryMenuId(categoryMenuId === asset.id ? null : asset.id); }}
+                                            title="改分类"
+                                        >
+                                            <FolderInput size={14} />
+                                        </button>
+                                        {categoryMenuId === asset.id && (
+                                            <div className="absolute top-8 left-0 w-32 max-h-48 overflow-y-auto bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl py-1 z-30">
+                                                {categories.map((cat: string) => (
+                                                    <button
+                                                        key={cat}
+                                                        onClick={(e) => { e.stopPropagation(); onChangeCategory?.(asset.id, cat); setCategoryMenuId(null); }}
+                                                        className={`w-full px-3 py-1.5 text-left text-xs hover:bg-neutral-800 flex items-center justify-between ${asset.category === cat ? 'text-white' : 'text-neutral-400'}`}
+                                                    >
+                                                        {cat}{asset.category === cat && <Check size={12} />}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Delete Button or Confirmation（多选模式下隐藏单删） */}
                                 {manageMode ? null : deleteConfirmId === asset.id ? (
