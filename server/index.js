@@ -574,6 +574,78 @@ app.post('/api/library/:id/category', (req, res) => {
     }
 });
 
+// 发布本人原创素材到公共库(只改可见性,不动文件)
+app.post('/api/library/:id/publish', (req, res) => {
+    try {
+        const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+        if (!fs.existsSync(libraryJsonPath)) return res.status(404).json({ error: 'Library not found' });
+        const libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
+        const asset = libraryData.find(a => a.id === req.params.id);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        if (!canAccess(asset.ownerId, req.user)) return res.status(403).json({ error: '无权发布该素材' });
+        if (asset.sourceAssetId) return res.status(400).json({ error: '收藏的素材不能再发布,请发布原始素材' });
+        asset.visibility = 'public';
+        asset.publishedAt = asset.publishedAt || new Date().toISOString();
+        asset.publishedBy = asset.ownerId;
+        fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
+        res.json({ success: true, asset });
+    } catch (e) {
+        console.error('Publish asset error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 从公共库收藏到自己库(零拷贝:只新增一行指向同一文件;幂等)
+app.post('/api/library/from-public/:publicId', (req, res) => {
+    try {
+        const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+        if (!fs.existsSync(libraryJsonPath)) return res.status(404).json({ error: 'Library not found' });
+        const libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
+        const pub = libraryData.find(a => a.id === req.params.publicId && a.visibility === 'public');
+        if (!pub) return res.status(404).json({ error: '公共素材不存在' });
+        // 幂等:我已有指向同一文件的行 → 直接返回,不重复建
+        const existing = libraryData.find(a => a.ownerId === req.user.id && a.url === pub.url);
+        if (existing) return res.json({ success: true, asset: existing, already: true });
+        const newEntry = {
+            id: crypto.randomUUID(),
+            ownerId: req.user.id,
+            name: pub.name,
+            category: 'Others',
+            url: pub.url,
+            type: pub.type,
+            visibility: 'private',
+            sourceAssetId: pub.id,
+            createdAt: new Date().toISOString(),
+        };
+        libraryData.push(newEntry);
+        fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
+        res.json({ success: true, asset: newEntry });
+    } catch (e) {
+        console.error('Add from public error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 列公共素材(任意登录用户可见,脱敏)
+app.get('/api/library/public', (req, res) => {
+    try {
+        const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+        if (!fs.existsSync(libraryJsonPath)) return res.json([]);
+        const rows = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'))
+            .filter(a => a.visibility === 'public')
+            .map(a => ({
+                id: a.id, name: a.name, category: a.category, url: a.url, type: a.type,
+                publishedBy: a.publishedBy || a.ownerId, mine: a.ownerId === req.user.id,
+                createdAt: a.publishedAt || a.createdAt,
+            }));
+        rows.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        res.json(rows);
+    } catch (e) {
+        console.error('List public assets error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- Workflow API Routes ---
 
 // Save/Update workflow
