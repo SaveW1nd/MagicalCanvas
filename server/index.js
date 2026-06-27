@@ -423,53 +423,62 @@ app.post('/api/library', async (req, res) => {
 
 // ---- 素材分类管理（categories.json 持久化完整分类列表，全部可增删） ----
 const DEFAULT_CATEGORIES = ['Character', 'Scene', 'Item', 'Style', 'Sound Effect', 'Others'];
-const categoriesJsonPath = () => path.join(LIBRARY_ASSETS_DIR, 'categories.json');
+// 每用户分类文件:library/users/{userId}/categories.json
+const userCategoriesPath = (userId) => path.join(LIBRARY_DIR, 'users', String(userId || '_anon'), 'categories.json');
 
-function loadCategories() {
+function loadCategories(userId) {
     try {
-        if (fs.existsSync(categoriesJsonPath())) {
-            const parsed = JSON.parse(fs.readFileSync(categoriesJsonPath(), 'utf8'));
-            // 旧格式：数组里只存自定义分类 → 与默认分类合并迁移
-            if (Array.isArray(parsed)) {
-                return [...DEFAULT_CATEGORIES, ...parsed.filter(c => typeof c === 'string' && c.trim() && !DEFAULT_CATEGORIES.includes(c))];
-            }
+        const p = userCategoriesPath(userId);
+        if (fs.existsSync(p)) {
+            const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
             if (parsed && Array.isArray(parsed.all)) {
                 const list = parsed.all.filter(c => typeof c === 'string' && c.trim());
                 if (list.length > 0) return list;
             }
         }
-    } catch (_) { /* 损坏时回退默认分类 */ }
+        // 首次:从旧全局 categories.json 继承(若有),否则默认
+        const legacy = path.join(LIBRARY_ASSETS_DIR, 'categories.json');
+        if (fs.existsSync(legacy)) {
+            const lp = JSON.parse(fs.readFileSync(legacy, 'utf8'));
+            const list = Array.isArray(lp)
+                ? [...DEFAULT_CATEGORIES, ...lp.filter(c => typeof c === 'string' && c.trim() && !DEFAULT_CATEGORIES.includes(c))]
+                : (lp && Array.isArray(lp.all) ? lp.all.filter(c => typeof c === 'string' && c.trim()) : null);
+            if (list && list.length > 0) return list;
+        }
+    } catch (_) { /* 损坏时回退默认 */ }
     return [...DEFAULT_CATEGORIES];
 }
 
-function saveCategories(list) {
-    fs.writeFileSync(categoriesJsonPath(), JSON.stringify({ all: list }, null, 2));
+function saveCategories(userId, list) {
+    const dir = path.join(LIBRARY_DIR, 'users', String(userId || '_anon'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(userCategoriesPath(userId), JSON.stringify({ all: list }, null, 2));
 }
 
 app.get('/api/library/categories', (req, res) => {
-    res.json({ categories: loadCategories() });
+    res.json({ categories: loadCategories(req.user.id) });
 });
 
 app.post('/api/library/categories', (req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 30);
     if (!name) return res.status(400).json({ error: '分类名称不能为空' });
-    const categories = loadCategories();
+    const categories = loadCategories(req.user.id);
     if (name === 'All' || categories.includes(name)) {
         return res.status(409).json({ error: '该分类已存在' });
     }
     categories.push(name);
-    saveCategories(categories);
+    saveCategories(req.user.id, categories);
     res.json({ categories });
 });
 
 app.delete('/api/library/categories/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
-    const categories = loadCategories();
+    const categories = loadCategories(req.user.id);
     if (!categories.includes(name)) return res.status(404).json({ error: '分类不存在' });
     if (categories.length <= 1) return res.status(400).json({ error: '至少保留一个分类' });
     const next = categories.filter(c => c !== name);
-    saveCategories(next);
-    // 该分类下的素材改挂到剩余分类（优先 Others），文件不动
+    saveCategories(req.user.id, next);
+    // 该分类下「本人」素材改挂到剩余分类（优先 Others），文件不动
     const fallback = next.includes('Others') ? 'Others' : next[next.length - 1];
     const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
     if (fs.existsSync(libraryJsonPath)) {
@@ -477,7 +486,7 @@ app.delete('/api/library/categories/:name', (req, res) => {
             const data = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
             let changed = false;
             for (const a of data) {
-                if (a.category === name) { a.category = fallback; changed = true; }
+                if (a.ownerId === req.user.id && a.category === name) { a.category = fallback; changed = true; }
             }
             if (changed) fs.writeFileSync(libraryJsonPath, JSON.stringify(data, null, 2));
         } catch (_) { /* assets.json 损坏时跳过迁移 */ }
