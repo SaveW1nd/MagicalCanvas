@@ -18,6 +18,7 @@ import storyWorkflowRoutes from './routes/story-workflow.js';
 import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/admin.js';
 import { requireAuth } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { canAccess } from './auth/ownership.js';
@@ -74,6 +75,9 @@ app.use('/api', (req, res, next) => {
     if (req.method === 'GET' && req.path.startsWith('/public-workflows')) return next();
     return requireAuth(req, res, next);
 });
+
+// 管理员后台 API（路由内部再校验 requireAdmin）
+app.use('/api/admin', adminRoutes);
 
 
 // ============================================================================

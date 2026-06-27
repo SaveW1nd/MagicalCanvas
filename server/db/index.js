@@ -125,6 +125,11 @@ export function recordLogin(id) {
     _touchLogin.run(now, now, id);
 }
 
+const _deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
+const _countActiveAdmins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'");
+export function deleteUser(id) { _deleteUser.run(id); }
+export function countActiveAdmins() { return _countActiveAdmins.get().n; }
+
 // ---------------------------------------------------------------------------
 // token denylist (logout)
 // ---------------------------------------------------------------------------

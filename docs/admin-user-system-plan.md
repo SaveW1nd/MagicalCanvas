@@ -152,22 +152,28 @@ Replaces **all 8 hardcoded lists** with one server-side source of truth (SQLite 
 
 ---
 
-## 5. Admin Panel (Frontend)
+## 5. Admin Console (standalone page — NOT the canvas)
 
-### 5.1 Auth context + login gate
-- `src/contexts/AuthContext.tsx`: `{ user, role, isAdmin, token, login, logout, checkSession }`.
-- `src/utils/apiClient.ts`: `apiFetch()` injects Bearer, handles 401/403. **Refactor scattered `fetch()`** in `services/generationService.ts`, `services/assetService.ts`, `hooks/useWorkflow.ts`, `hooks/useChatAgent.ts` (+ SSE).
-- `src/index.tsx`: wrap in `<AuthProvider>`; `!user` → `LoginPage`, else `App`; on mount `GET /api/auth/me`.
-- On logout clear token + `mc_last_workflow_id`.
+> **设计纠正 (2026-06-27)**：管理员**不使用画布**。管理员登录后进入**独立的管理后台**(自己的页面/布局)，专做配置与运营管理；普通用户登录进画布。后台与画布是两套界面，靠角色路由分流。
 
-### 5.2 New frontend files
-`auth/LoginPage.tsx`, `contexts/AuthContext.tsx`, `utils/apiClient.ts`, `admin/AdminPanel.tsx`, `admin/UserManagement.tsx`, `admin/ModelRegistryManager.tsx`.
+### 5.1 路由分流（登录后落地页按角色）
+- `src/index.tsx` Gate：`!user` → `LoginPage`；`user.role==='admin'` → `<AdminConsole/>`；否则 → `<App/>`(画布)。
+- 管理员**默认进后台**，不进画布。是否给管理员一个「进入画布(创作者模式)」入口 = 待定(见下方问题)。
+- 后台是独立布局(侧边栏 + 内容区)，不复用画布的 TopBar/Toolbar。
 
-### 5.3 TopBar + guarding
-User menu (logout) + **Admin** button (admins only). Backend `requireAdmin` is the real gate.
+### 5.2 管理后台三大模块
+1. **模型配置 / 模型清单**：增改删模型条目(type、displayName、provider、**baseUrl**、**apiKey**、能力、enabled、isDefault、order、minRole)；「拉取上游模型列表」(调 provider `/models` 回填可选项)；「测试连通性」。= P2 动态注册表的管理界面 + 取代现有 SettingsModal 的密钥/源配置。**密钥只在后台可见/可改(读时掩码、写时覆盖)，绝不下发普通用户**。
+2. **用户管理**：列表 / 新建 / 改角色 / 禁用启用 / 重置密码 / 删除。后端 `requireAdmin` 的 `/api/admin/users` CRUD。
+3. **全部历史记录(跨用户)**：浏览所有用户的生成历史 / 工作流 / 聊天，可**按用户筛选查看**(下拉选某用户)，支持预览、删除、按用户/时间清理。后端 `/api/admin/*` 走 `requireAdmin`，绕过 ownerId 过滤(管理员可见全部)，但仍只读/受控操作。
 
-### 5.4 SettingsModal
-Split: model/provider/baseUrl/key config → `ModelRegistryManager` (admin-only, keys masked). Global settings (concurrency) stay admin-only. Regular users get slimmed prefs (theme) or none at MVP.
+### 5.3 前端文件（后台独立）
+`auth/LoginPage.tsx`(已建)、`contexts/AuthContext.tsx`(已建)、`utils/apiClient.ts`(已建)；新增：`admin/AdminConsole.tsx`(布局+侧边栏路由)、`admin/ModelRegistryManager.tsx`、`admin/UserManagement.tsx`、`admin/GlobalHistoryBrowser.tsx`。
+
+### 5.4 后端 admin 接口（全部 requireAdmin）
+- 用户：`GET/POST/PUT/DELETE /api/admin/users`、`POST /api/admin/users/:id/reset-password`、`PUT /api/admin/users/:id/disable`。
+- 模型注册表：`GET/POST/PUT/DELETE /api/admin/models` + `POST /api/admin/models/:id/test` + `POST /api/admin/models/fetch-upstream`(拉上游 /models)。
+- 跨用户历史：`GET /api/admin/assets?ownerId=&type=`、`GET /api/admin/workflows?ownerId=`、`GET /api/admin/chats?ownerId=`、对应删除/清理。
+- 现有 `SettingsModal` 的密钥/源配置迁入「模型配置」模块(普通用户不再有设置入口或仅留主题等无敏感项)。
 
 ---
 

@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import App from './App';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
+import { AdminConsole } from './components/admin/AdminConsole';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -20,7 +21,9 @@ const Gate: React.FC = () => {
       </div>
     );
   }
-  return user ? <App /> : <LoginPage />;
+  if (!user) return <LoginPage />;
+  // 管理员进独立后台（不进画布）；普通用户进画布
+  return user.role === 'admin' ? <AdminConsole /> : <App />;
 };
 
 const root = ReactDOM.createRoot(rootElement);
