@@ -9,6 +9,7 @@ import { Users, SlidersHorizontal, History, LogOut, KeyRound } from 'lucide-reac
 import { useAuth } from '../../contexts/AuthContext';
 import { UserManagement } from './UserManagement';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal';
+import { ToastHost } from '../Toast';
 
 type Tab = 'users' | 'models' | 'history';
 
@@ -71,6 +72,7 @@ export const AdminConsole: React.FC = () => {
             </main>
 
             <ChangePasswordModal isOpen={showChangePw} onClose={() => setShowChangePw(false)} />
+            <ToastHost />
         </div>
     );
 };

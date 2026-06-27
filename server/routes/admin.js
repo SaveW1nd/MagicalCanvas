@@ -59,9 +59,10 @@ router.post('/users/:id/reset-password', (req, res) => {
     const u = getUserById(req.params.id);
     if (!u) return res.status(404).json({ error: '用户不存在' });
     const { newPassword } = req.body || {};
-    if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
-    updateUser(req.params.id, { passwordHash: hashPassword(newPassword) });
-    res.json({ success: true });
+    if (newPassword && String(newPassword).length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
+    const pw = newPassword && String(newPassword) ? String(newPassword) : DEFAULT_PASSWORD;
+    updateUser(req.params.id, { passwordHash: hashPassword(pw) });
+    res.json({ success: true, defaultPassword: newPassword ? undefined : DEFAULT_PASSWORD });
 });
 
 router.delete('/users/:id', (req, res) => {
