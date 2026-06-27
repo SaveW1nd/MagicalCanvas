@@ -5,6 +5,8 @@
  * endpoints land in later increments under the same requireAdmin guard.
  */
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import {
     listUsers, getUserById, getUserByUsername, createUser, updateUser, deleteUser,
     countActiveAdmins, publicUser,
@@ -196,6 +198,104 @@ router.delete('/models/:id', (req, res) => {
     if (!getModel(req.params.id)) return res.status(404).json({ error: '模型不存在' });
     deleteModel(req.params.id);
     res.json({ success: true });
+});
+
+// --- 全部历史（P3）：跨用户浏览生成历史/画布/对话/剪辑 ---
+// 数据是文件型(library/{type}/*.json)，每条带 ownerId。只读浏览 + 按用户/类型/关键词筛选。
+const HISTORY_TYPES = {
+    images: '图片',
+    videos: '视频',
+    chats: '对话',
+    workflows: '画布',
+    'edit-projects': '剪辑',
+};
+
+function readDirJson(dir) {
+    if (!fs.existsSync(dir)) return [];
+    const out = [];
+    for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.json')) continue;
+        try { out.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))); }
+        catch { /* 跳过损坏文件 */ }
+    }
+    return out;
+}
+
+function normalizeHistory(type, d) {
+    const base = {
+        id: d.id,
+        type,
+        ownerId: d.ownerId || null,
+        createdAt: d.createdAt || d.updatedAt || null,
+        updatedAt: d.updatedAt || d.createdAt || null,
+    };
+    if (type === 'images' || type === 'videos') {
+        return {
+            ...base,
+            title: d.title || d.prompt || '(无标题)',
+            prompt: d.prompt || '',
+            model: d.model || '',
+            url: d.url || (d.filename ? `/library/${type}/${d.filename}` : null),
+            extra: [d.aspectRatio, d.resolution].filter(Boolean).join(' · '),
+        };
+    }
+    if (type === 'chats') {
+        return { ...base, title: d.topic || '(未命名对话)', count: Array.isArray(d.messages) ? d.messages.length : 0 };
+    }
+    if (type === 'workflows') {
+        const nodes = d.nodes;
+        const count = Array.isArray(nodes) ? nodes.length : (nodes && typeof nodes === 'object' ? Object.keys(nodes).length : 0);
+        return { ...base, title: d.title || '未命名', cover: d.coverUrl || null, count };
+    }
+    if (type === 'edit-projects') {
+        return { ...base, title: d.name || d.title || '未命名剪辑' };
+    }
+    return base;
+}
+
+router.get('/history', (req, res) => {
+    try {
+        const LIBRARY_DIR = req.app.locals.LIBRARY_DIR;
+        if (!LIBRARY_DIR) return res.status(500).json({ error: '资源目录未配置' });
+
+        const wantType = HISTORY_TYPES[req.query.type] ? String(req.query.type) : null;
+        const userId = req.query.userId ? String(req.query.userId) : null;
+        const q = String(req.query.q || '').trim().toLowerCase();
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 60, 1), 500);
+        const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+        const users = listUsers();
+        const nameById = new Map(users.map(u => [u.id, u.username]));
+
+        const types = wantType ? [wantType] : Object.keys(HISTORY_TYPES);
+        let items = [];
+        for (const t of types) {
+            for (const d of readDirJson(path.join(LIBRARY_DIR, t))) {
+                const it = normalizeHistory(t, d);
+                it.ownerName = it.ownerId ? (nameById.get(it.ownerId) || '(已删除用户)') : '(无归属)';
+                items.push(it);
+            }
+        }
+
+        // 每种类型的总量（不受当前筛选影响，给前端做概览徽标）
+        const typeCounts = {};
+        for (const it of items) typeCounts[it.type] = (typeCounts[it.type] || 0) + 1;
+
+        if (userId) items = items.filter(it => it.ownerId === userId);
+        if (q) items = items.filter(it =>
+            (it.title || '').toLowerCase().includes(q) ||
+            (it.prompt || '').toLowerCase().includes(q) ||
+            (it.ownerName || '').toLowerCase().includes(q));
+
+        items.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+        const total = items.length;
+        const page = items.slice(offset, offset + limit);
+        res.json({ items: page, total, hasMore: offset + limit < total, users, typeCounts });
+    } catch (e) {
+        console.error('admin history error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 export default router;

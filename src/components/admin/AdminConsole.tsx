@@ -1,7 +1,7 @@
 /**
  * AdminConsole.tsx — standalone admin page (NOT the canvas).
  *
- * Sidebar layout. Modules: 用户管理 (live), 模型配置 + 全部历史 (next increments).
+ * Sidebar layout. Modules: 模型配置 / 用户管理 / 全部历史 (all live).
  * Admins land here after login (see src/index.tsx Gate).
  */
 import React, { useState } from 'react';
@@ -9,6 +9,7 @@ import { Users, SlidersHorizontal, History, LogOut, KeyRound } from 'lucide-reac
 import { useAuth } from '../../contexts/AuthContext';
 import { UserManagement } from './UserManagement';
 import { ModelConfig } from './ModelConfig';
+import { HistoryBrowser } from './HistoryBrowser';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal';
 import { ToastHost } from '../Toast';
 
@@ -19,15 +20,6 @@ const NAV: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: 'users', label: '用户管理', icon: <Users size={18} /> },
     { key: 'history', label: '全部历史', icon: <History size={18} /> },
 ];
-
-const Placeholder: React.FC<{ title: string; note: string }> = ({ title, note }) => (
-    <div className="max-w-2xl">
-        <h2 className="text-lg font-semibold text-white mb-2">{title}</h2>
-        <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/50 p-8 text-center text-neutral-500 text-sm">
-            {note}
-        </div>
-    </div>
-);
 
 export const AdminConsole: React.FC = () => {
     const { user, logout } = useAuth();
@@ -69,7 +61,7 @@ export const AdminConsole: React.FC = () => {
             <main className="flex-1 overflow-y-auto p-8">
                 {tab === 'users' && <UserManagement currentUserId={user?.id || ''} />}
                 {tab === 'models' && <ModelConfig />}
-                {tab === 'history' && <Placeholder title="全部历史记录" note="即将上线：浏览所有用户的生成历史/工作流/聊天，可按用户筛选查看。" />}
+                {tab === 'history' && <HistoryBrowser />}
             </main>
 
             <ChangePasswordModal isOpen={showChangePw} onClose={() => setShowChangePw(false)} />
