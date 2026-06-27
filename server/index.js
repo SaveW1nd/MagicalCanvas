@@ -19,10 +19,12 @@ import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
+import modelsRoutes from './routes/models.js';
 import { requireAuth } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { canAccess } from './auth/ownership.js';
 import { migrateOwnership } from './db/migrate-ownership.js';
+import { seedRegistryFromConfig } from './db/registry.js';
 import { userMediaDir, libUrlToPath } from './utils/imageHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +81,9 @@ app.use('/api', (req, res, next) => {
 
 // 管理员后台 API（路由内部再校验 requireAdmin）
 app.use('/api/admin', adminRoutes);
+
+// 模型注册表（画布读取可用模型清单；任意登录用户可读，不含密钥）
+app.use('/api/models', modelsRoutes);
 
 
 // ============================================================================
@@ -1575,6 +1580,7 @@ if (process.env.NODE_ENV === 'production') {
 try {
     const adminId = bootstrapAdmin();
     migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR, IMAGES_DIR, VIDEOS_DIR, path.join(LIBRARY_DIR, 'prompt-templates')] });
+    seedRegistryFromConfig();
 } catch (e) {
     console.error('[auth] bootstrap/migrate failed:', e.message);
 }

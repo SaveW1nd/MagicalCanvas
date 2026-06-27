@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 import { Users, SlidersHorizontal, History, LogOut, KeyRound } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserManagement } from './UserManagement';
+import { ModelConfig } from './ModelConfig';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal';
 import { ToastHost } from '../Toast';
 
@@ -67,7 +68,7 @@ export const AdminConsole: React.FC = () => {
             {/* Content */}
             <main className="flex-1 overflow-y-auto p-8">
                 {tab === 'users' && <UserManagement currentUserId={user?.id || ''} />}
-                {tab === 'models' && <Placeholder title="模型配置 / 模型清单" note="即将上线：增改删模型(baseUrl/apiKey/能力/启用/默认)、拉取上游模型列表、测试连通。" />}
+                {tab === 'models' && <ModelConfig />}
                 {tab === 'history' && <Placeholder title="全部历史记录" note="即将上线：浏览所有用户的生成历史/工作流/聊天，可按用户筛选查看。" />}
             </main>
 

@@ -15,6 +15,7 @@ import { ChangeAnglePanel } from './ChangeAnglePanel';
 import { LocalModel, getLocalModels } from '../../services/localModelService';
 import { showToast } from '../Toast';
 import { optimizePromptRequest, describeImageRequest } from '../../utils/aiPrompt';
+import { useModelRegistry } from '../../hooks/useModelRegistry';
 
 interface NodeControlsProps {
     data: NodeData;
@@ -50,7 +51,8 @@ const VIDEO_DURATIONS = [5, 6, 8, 10];
 // aspectRatios: Supported aspect ratios (most video models support 16:9 and 9:16)
 const VIDEO_ASPECT_RATIOS = ["16:9", "9:16"];
 
-const VIDEO_MODELS = [
+// 兜底清单：注册表(/api/models)未加载或为空时使用，保证下拉不为空。
+const VIDEO_MODELS_FALLBACK = [
     // 实际生效的是 fp（Google Flow 指纹窗口）的视频模型，经 OpenAI 兼容 /v1/video/generations 出片。
     // 时长档来自 flow 注册表权威数据；后端按 (档位,模式,时长,朝向) 精确选 wire-key。
     // Omni Flash：4/6/8/10s，支持文生/图生/多图参考(≤7)，不支持首尾帧。
@@ -69,7 +71,7 @@ const VIDEO_MODELS = [
 // Note: Kling V1.5 is the only Kling model supporting single-image reference via image_reference
 // Note: Kling V2/V2.1 only support references via Multi-Image API
 // aspectRatios: Supported aspect ratios for the model
-const IMAGE_MODELS = [
+const IMAGE_MODELS_FALLBACK = [
     // 实际生效的是 fp（Google Flow 指纹窗口）提供的 Nano Banana 系列，经 OpenAI 兼容 /v1/images/generations 出图。
     // gpt2api.com 上游目前不出图、OpenAI/Kling 也不走 fp，故下拉只保留这两个真正能出图的模型。
     {
@@ -159,6 +161,11 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
     zoom,
     canvasTheme = 'dark'
 }) => {
+    // 模型清单优先取自管理后台配置的注册表(/api/models)；未加载时回退到兜底常量。
+    const registry = useModelRegistry();
+    const IMAGE_MODELS = registry.image.length ? registry.image : IMAGE_MODELS_FALLBACK;
+    const VIDEO_MODELS = registry.video.length ? registry.video : VIDEO_MODELS_FALLBACK;
+
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [showSizeDropdown, setShowSizeDropdown] = useState(false);
     const [showAspectRatioDropdown, setShowAspectRatioDropdown] = useState(false);

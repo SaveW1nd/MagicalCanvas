@@ -21,26 +21,41 @@ import { gpt2apiChat, requestChatCompletion } from "../services/gpt2api.js";
 import { AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
 import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
 import { canAccess } from "../auth/ownership.js";
+import { resolveModel } from "../db/registry.js";
 
 /** 一个 turn 内最多自主调用工具的轮数（防失控成本），由路由侧据此兜底。 */
 export const MAX_AGENT_STEPS = 10;
 
+// 优先用模型注册表（管理后台→模型配置）解析某类的默认模型 + 接入点；
+// 无匹配时回退到「设置」里的旧版按类配置。
+function resolveCategoryConfig(category, legacy) {
+    try {
+        const hit = resolveModel(category, null);
+        if (hit && hit.provider.baseUrl && hit.provider.apiKey) {
+            return { apiKey: hit.provider.apiKey, baseUrl: hit.provider.baseUrl, model: hit.model.modelId };
+        }
+    } catch (e) {
+        console.warn('[Registry] agent resolve failed, using legacy config:', e.message);
+    }
+    return legacy();
+}
+
 // 读取文字模型配置（聊天 Agent / function calling）
 function getTextConfig() {
-    return {
+    return resolveCategoryConfig('text', () => ({
         apiKey: getKey('TEXT_API_KEY'),
         baseUrl: getKey('TEXT_API_URL'),
         model: getKey('TEXT_MODEL') || 'grok-4.20-fast',
-    };
+    }));
 }
 
 // 读取视觉模型配置（看图，留空回退到文字端点）
 function getVisionConfig() {
-    return {
+    return resolveCategoryConfig('vision', () => ({
         apiKey: getKey('VISION_API_KEY'),
         baseUrl: getKey('VISION_API_URL'),
         model: getKey('VISION_MODEL') || 'mimo-v2.5',
-    };
+    }));
 }
 
 /** 基于会话生成简短主题标题（使用 gpt2api 文本模型） */

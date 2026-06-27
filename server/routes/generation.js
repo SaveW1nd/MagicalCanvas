@@ -14,8 +14,26 @@ import { generateOpenAIImage } from '../services/openai.js';
 import { resolveImageToBase64, saveBufferToFile, userMediaDir } from '../utils/imageHelpers.js';
 import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
 import { generateFlow2apiImage, generateFlow2apiVideo, isFlow2apiImageModel, isFlow2apiVideoModel } from '../services/flow2api.js';
+import { resolveModel } from '../db/registry.js';
 
 const router = express.Router();
+
+/**
+ * Resolve {baseUrl, apiKey, model} for a generation request, preferring the
+ * dynamic model registry (admin-configured providers). Falls back to the legacy
+ * per-category config (app.locals.*_API_URL/KEY/MODEL) when no registry match.
+ */
+function pickEndpoint(category, requestedModel, fb) {
+    try {
+        const hit = resolveModel(category, requestedModel);
+        if (hit && hit.provider.baseUrl && hit.provider.apiKey) {
+            return { baseUrl: hit.provider.baseUrl, apiKey: hit.provider.apiKey, model: hit.model.modelId };
+        }
+    } catch (e) {
+        console.warn('[Registry] resolve failed, using legacy config:', e.message);
+    }
+    return { baseUrl: fb.baseUrl, apiKey: fb.apiKey, model: requestedModel || fb.model };
+}
 
 // 正在进行的生成任务（nodeId 集合，进程内存）。用于让状态接口区分
 // 「还在生成中」和「应用重启后任务已中断」——后者前端可以直接标记失败让用户重试。
@@ -69,15 +87,18 @@ router.post('/generate-image', async (req, res) => {
                 imageBase64Array = rawImages.map(img => resolveImageToBase64(img)).filter(Boolean);
             }
 
-            console.log(`Using image model: ${effectiveImageModel} @ ${IMAGE_API_URL}`);
+            // 优先用模型注册表解析 baseUrl/key/模型名；无匹配回退到「设置」全局图片配置。
+            const ep = pickEndpoint('image', imageModel, { baseUrl: IMAGE_API_URL, apiKey: IMAGE_API_KEY, model: IMAGE_MODEL });
+            if (!ep.apiKey) return res.status(500).json({ error: "未配置图片模型 KEY，请在「设置」或「管理后台→模型配置」中填写" });
+            console.log(`Using image model: ${ep.model} @ ${ep.baseUrl}`);
             const result = await generateGpt2apiImage({
                 prompt,
                 imageBase64Array,
                 aspectRatio,
                 resolution,
-                model: effectiveImageModel,
-                baseUrl: IMAGE_API_URL,
-                apiKey: IMAGE_API_KEY,
+                model: ep.model,
+                baseUrl: ep.baseUrl,
+                apiKey: ep.apiKey,
             });
             imageBuffer = result.buffer;
             imageFormat = result.format;
@@ -274,10 +295,10 @@ router.post('/generate-video', async (req, res) => {
             if (!VIDEO_API_KEY) {
                 return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
             }
-            // 节点上选择的模型优先；其次「设置」里的模型；都没有则用 veo3.1-lite
-            const requestedModel = videoModel && isGpt2apiVideoModel(videoModel) ? videoModel : null;
-            const resolvedVideoModel = requestedModel || VIDEO_MODEL || 'veo3.1-lite';
-            console.log(`Using video model: ${resolvedVideoModel} @ ${VIDEO_API_URL}, duration: ${duration || 6}s`);
+            // 优先用模型注册表解析 baseUrl/key/模型名；无匹配回退到「设置」全局视频配置。
+            const ep = pickEndpoint('video', videoModel, { baseUrl: VIDEO_API_URL, apiKey: VIDEO_API_KEY, model: VIDEO_MODEL || 'veo3.1-lite' });
+            if (!ep.apiKey) return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」或「管理后台→模型配置」中填写" });
+            console.log(`Using video model: ${ep.model} @ ${ep.baseUrl}, duration: ${duration || 6}s`);
             videoBuffer = await generateGpt2apiVideo({
                 prompt,
                 imageBase64,
@@ -286,9 +307,9 @@ router.post('/generate-video', async (req, res) => {
                 aspectRatio,
                 resolution,
                 duration: duration || 6,
-                model: resolvedVideoModel,
-                baseUrl: VIDEO_API_URL,
-                apiKey: VIDEO_API_KEY,
+                model: ep.model,
+                baseUrl: ep.baseUrl,
+                apiKey: ep.apiKey,
             });
 
         } else if (isKlingModel) {

@@ -13,6 +13,12 @@ import {
 const DEFAULT_PASSWORD = '12345678';
 import { hashPassword } from '../auth/passwords.js';
 import { requireAdmin } from '../auth/middleware.js';
+import {
+    listProviders, getProvider, createProvider, updateProvider, deleteProvider,
+    countModelsForProvider, publicProvider,
+    listModels, getModel, createModel, updateModel, deleteModel,
+    CATEGORIES, PROVIDER_KINDS,
+} from '../db/registry.js';
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -71,6 +77,124 @@ router.delete('/users/:id', (req, res) => {
     if (req.user.id === req.params.id) return res.status(400).json({ error: '不能删除自己' });
     if (u.role === 'admin' && countActiveAdmins() <= 1) return res.status(400).json({ error: '不能删除最后一个管理员' });
     deleteUser(req.params.id);
+    res.json({ success: true });
+});
+
+// ===========================================================================
+// MODEL REGISTRY (P2) — providers + models
+// ===========================================================================
+
+// --- Providers ---
+router.get('/providers', (_req, res) => {
+    res.json({ providers: listProviders().map(publicProvider) });
+});
+
+router.post('/providers', (req, res) => {
+    const { name, kind, baseUrl, apiKey } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: '请输入名称' });
+    if (kind && !PROVIDER_KINDS.includes(kind)) return res.status(400).json({ error: '未知类型' });
+    const p = createProvider({ name, kind, baseUrl, apiKey });
+    res.status(201).json({ provider: publicProvider(p) });
+});
+
+router.put('/providers/:id', (req, res) => {
+    if (!getProvider(req.params.id)) return res.status(404).json({ error: '接入点不存在' });
+    const { name, kind, baseUrl, apiKey } = req.body || {};
+    const fields = {};
+    if (name !== undefined) fields.name = name;
+    if (kind !== undefined) fields.kind = kind;
+    if (baseUrl !== undefined) fields.baseUrl = baseUrl;
+    // apiKey 留空字符串表示「不修改」，避免误清空；要清空需显式传 null
+    if (apiKey !== undefined && apiKey !== '') fields.apiKey = apiKey;
+    if (apiKey === null) fields.apiKey = '';
+    res.json({ provider: publicProvider(updateProvider(req.params.id, fields)) });
+});
+
+router.delete('/providers/:id', (req, res) => {
+    if (!getProvider(req.params.id)) return res.status(404).json({ error: '接入点不存在' });
+    const n = countModelsForProvider(req.params.id);
+    if (n > 0) return res.status(400).json({ error: `该接入点下还有 ${n} 个模型，请先删除或改绑这些模型` });
+    deleteProvider(req.params.id);
+    res.json({ success: true });
+});
+
+// 测试连通：用接入点的 baseUrl+apiKey 调 GET {baseUrl}/models（不消耗额度）。
+router.post('/providers/:id/test', async (req, res) => {
+    const p = getProvider(req.params.id);
+    if (!p) return res.status(404).json({ error: '接入点不存在' });
+    const url = (p.baseUrl || '').replace(/\/+$/, '');
+    if (!url) return res.status(400).json({ success: false, error: '未配置 baseUrl' });
+    if (!p.apiKey) return res.status(400).json({ success: false, error: '未配置 apiKey' });
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let r;
+        try {
+            r = await fetch(`${url}/models`, { headers: { Authorization: `Bearer ${p.apiKey}` }, signal: ctrl.signal });
+        } finally { clearTimeout(timer); }
+        if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            return res.json({ success: false, error: `HTTP ${r.status}: ${txt.slice(0, 200)}` });
+        }
+        const data = await r.json().catch(() => ({}));
+        const ids = Array.isArray(data?.data) ? data.data.map(m => m.id).filter(Boolean) : [];
+        res.json({ success: true, modelCount: ids.length, message: `连接成功，上游可见 ${ids.length} 个模型` });
+    } catch (e) {
+        res.json({ success: false, error: e.name === 'AbortError' ? '请求超时' : e.message });
+    }
+});
+
+// 拉取上游模型列表（供管理员从中挑选添加）。
+router.get('/providers/:id/upstream-models', async (req, res) => {
+    const p = getProvider(req.params.id);
+    if (!p) return res.status(404).json({ error: '接入点不存在' });
+    const url = (p.baseUrl || '').replace(/\/+$/, '');
+    if (!url || !p.apiKey) return res.status(400).json({ error: '该接入点未配置 baseUrl / apiKey' });
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let r;
+        try {
+            r = await fetch(`${url}/models`, { headers: { Authorization: `Bearer ${p.apiKey}` }, signal: ctrl.signal });
+        } finally { clearTimeout(timer); }
+        if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            return res.status(502).json({ error: `上游返回 HTTP ${r.status}: ${txt.slice(0, 200)}` });
+        }
+        const data = await r.json().catch(() => ({}));
+        const ids = Array.isArray(data?.data) ? data.data.map(m => m.id).filter(Boolean) : [];
+        res.json({ models: ids });
+    } catch (e) {
+        res.status(502).json({ error: e.name === 'AbortError' ? '请求超时' : e.message });
+    }
+});
+
+// --- Models ---
+router.get('/models', (_req, res) => {
+    res.json({ models: listModels(), providers: listProviders().map(publicProvider) });
+});
+
+router.post('/models', (req, res) => {
+    const { modelId, label, category, providerId, enabled, isDefault, capabilities, sortOrder } = req.body || {};
+    if (!modelId || !String(modelId).trim()) return res.status(400).json({ error: '请输入模型 ID' });
+    if (!CATEGORIES.includes(category)) return res.status(400).json({ error: '未知类别' });
+    if (!getProvider(providerId)) return res.status(400).json({ error: '请选择有效的接入点' });
+    const m = createModel({ modelId, label, category, providerId, enabled, isDefault, capabilities, sortOrder });
+    res.status(201).json({ model: m });
+});
+
+router.put('/models/:id', (req, res) => {
+    if (!getModel(req.params.id)) return res.status(404).json({ error: '模型不存在' });
+    const { category, providerId } = req.body || {};
+    if (category !== undefined && !CATEGORIES.includes(category)) return res.status(400).json({ error: '未知类别' });
+    if (providerId !== undefined && !getProvider(providerId)) return res.status(400).json({ error: '请选择有效的接入点' });
+    const m = updateModel(req.params.id, req.body || {});
+    res.json({ model: m });
+});
+
+router.delete('/models/:id', (req, res) => {
+    if (!getModel(req.params.id)) return res.status(404).json({ error: '模型不存在' });
+    deleteModel(req.params.id);
     res.json({ success: true });
 });
 
