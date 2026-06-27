@@ -198,6 +198,9 @@ function saveSession(sessionId, session) {
     const data = {
         id: sessionId,
         topic: session.topic,
+        ownerId: session.ownerId,
+        summary: session.summary || '',
+        summarizedCount: session.summarizedCount || 0,
         createdAt: session.createdAt,
         updatedAt: new Date().toISOString(),
         messages: session.messages.map(m => ({
@@ -224,6 +227,9 @@ function loadSession(sessionId) {
                 timestamp: m.timestamp,
             })),
             topic: data.topic,
+            ownerId: data.ownerId,
+            summary: data.summary || '',
+            summarizedCount: data.summarizedCount || 0,
             createdAt: new Date(data.createdAt),
             pending: null,
         };
@@ -237,7 +243,7 @@ export function getSession(sessionId) {
     if (sessionCache.has(sessionId)) return sessionCache.get(sessionId);
     const loaded = loadSession(sessionId);
     if (loaded) { sessionCache.set(sessionId, loaded); return loaded; }
-    const newSession = { messages: [], topic: null, createdAt: new Date(), pending: null };
+    const newSession = { messages: [], topic: null, summary: '', summarizedCount: 0, createdAt: new Date(), pending: null };
     sessionCache.set(sessionId, newSession);
     return newSession;
 }
@@ -344,6 +350,60 @@ async function describeMediaToText(media) {
     return `\n\n[用户本轮附带的图片内容如下（由视觉模型识别）]\n${lines.join('\n')}`;
 }
 
+// ============================================================================
+// 超长对话自动裁剪/摘要：UI 保留全部历史，但喂给模型的上下文有界
+// ----------------------------------------------------------------------------
+// 当"未摘要"消息超过 COMPACT_TRIGGER 条时，把较早的部分（保留最近 KEEP_RECENT 条
+// 不动）压缩进 session.summary，并推进 summarizedCount。喂给模型的 history =
+// [摘要(若有)] + 最近未摘要消息。session.messages 永不删除（前端照常显示全部）。
+// ============================================================================
+const KEEP_RECENT = 16;       // 最近多少条原样保留
+const COMPACT_TRIGGER = 30;   // 未摘要消息超过这个数才触发压缩
+
+async function maybeCompactSession(session) {
+    const start = session.summarizedCount || 0;
+    const unsummarized = session.messages.slice(start);
+    if (unsummarized.length <= COMPACT_TRIGGER) return;
+
+    const toFold = unsummarized.slice(0, unsummarized.length - KEEP_RECENT);
+    if (toFold.length === 0) return;
+
+    const transcript = toFold
+        .map(m => `${m.role === 'user' ? '用户' : '助手'}：${typeof m.content === 'string' ? m.content : '[媒体]'}`)
+        .join('\n')
+        .slice(0, 12000);
+    const prior = session.summary ? `已有摘要：\n${session.summary}\n\n` : '';
+
+    try {
+        const { apiKey, baseUrl, model } = getTextConfig();
+        if (!apiKey) return;
+        const summary = await gpt2apiChat({
+            messages: [
+                { role: 'system', content: '你是对话摘要器。把下面的对话压缩成简洁中文要点，保留：用户的目标/偏好、已确定的事实与决定、画布上已建的关键节点/链路、尚未完成的事项。合并已有摘要，不要丢失关键信息。只输出摘要正文，不要寒暄。' },
+                { role: 'user', content: `${prior}新增对话：\n${transcript}` },
+            ],
+            model, baseUrl, apiKey, temperature: 0.3, maxTokens: 1500,
+        });
+        if (summary && summary.trim()) {
+            session.summary = summary.trim();
+            session.summarizedCount = start + toFold.length;
+            console.log(`[Agent] 会话已压缩：摘要覆盖前 ${session.summarizedCount} 条，保留最近 ${session.messages.length - session.summarizedCount} 条`);
+        }
+    } catch (e) {
+        console.error('[Agent] summarize failed (本轮发送完整历史):', e.message);
+    }
+}
+
+/** 构造喂给模型的历史：摘要(若有) + 最近未摘要消息 */
+function buildModelHistory(session) {
+    const start = session.summarizedCount || 0;
+    const recent = session.messages.slice(start).map(m => ({ role: m.role, content: m.content }));
+    if (session.summary) {
+        return [{ role: 'system', content: `【以下是更早对话的摘要，供你保持上下文】\n${session.summary}` }, ...recent];
+    }
+    return recent;
+}
+
 /** 把模型返回转成可加入消息栈的 assistant 消息 */
 function assistantMessageFromResult(result) {
     const msg = { role: 'assistant', content: result.content || '' };
@@ -404,8 +464,10 @@ export async function sendMessage(sessionId, content, media, onDelta) {
     const session = getSession(sessionId);
     console.log(`[Agent] turn start: session=${sessionId} history=${session.messages.length}`);
 
-    // 历史（干净视图）转 OpenAI 消息
-    const history = session.messages.map(m => ({ role: m.role, content: m.content }));
+    // 超长则先压缩较早历史为摘要（UI 仍保留全部）
+    await maybeCompactSession(session);
+    // 喂给模型的历史 = 摘要(若有) + 最近未摘要消息
+    const history = buildModelHistory(session);
     // 本轮用户消息：带图片时先用视觉模型转成文字描述，再以纯文本喂给文字模型
     // （文字模型如 DeepSeek 不接受 image_url，且需保留 function calling）。
     const visionText = await describeMediaToText(media);
