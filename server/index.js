@@ -554,6 +554,26 @@ app.delete('/api/library/:id', async (req, res) => {
     }
 });
 
+// 改某素材的分类(本人,只改元数据,不动文件)
+app.post('/api/library/:id/category', (req, res) => {
+    try {
+        const category = String(req.body?.category || '').trim();
+        if (!category) return res.status(400).json({ error: '分类不能为空' });
+        const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+        if (!fs.existsSync(libraryJsonPath)) return res.status(404).json({ error: 'Library not found' });
+        const libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
+        const asset = libraryData.find(a => a.id === req.params.id);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        if (!canAccess(asset.ownerId, req.user)) return res.status(403).json({ error: '无权修改该素材' });
+        asset.category = category;
+        fs.writeFileSync(libraryJsonPath, JSON.stringify(libraryData, null, 2));
+        res.json({ success: true, asset });
+    } catch (e) {
+        console.error('Change asset category error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- Workflow API Routes ---
 
 // Save/Update workflow
