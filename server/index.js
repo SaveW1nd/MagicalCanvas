@@ -429,6 +429,7 @@ app.post('/api/library', async (req, res) => {
 
         const newEntry = {
             id: crypto.randomUUID(),
+            ownerId: req.user.id,
             name: name,
             category: category,
             url: `/library/assets/${category}/${destFilename}`,
@@ -518,7 +519,8 @@ app.get('/api/library', async (req, res) => {
         if (!fs.existsSync(libraryJsonPath)) {
             return res.json([]);
         }
-        const libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
+        const libraryData = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'))
+            .filter(a => canAccess(a.ownerId, req.user)); // 仅本人素材
         // Sort newest first
         libraryData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         res.json(libraryData);
@@ -546,6 +548,9 @@ app.delete('/api/library/:id', async (req, res) => {
         }
 
         const asset = libraryData[assetIndex];
+        if (!canAccess(asset.ownerId, req.user)) {
+            return res.status(403).json({ error: '无权删除该素材' });
+        }
 
         // Delete the actual file if it exists in our assets folder
         // asset.url usually looks like /library/assets/Category/file.ext
@@ -997,6 +1002,7 @@ app.post('/api/assets/:type', async (req, res) => {
         // Save metadata
         const metadata = {
             id,
+            ownerId: req.user.id,
             filename,
             prompt: prompt || '',
             createdAt: new Date().toISOString(),
@@ -1037,6 +1043,7 @@ app.get('/api/assets/:type', async (req, res) => {
                 try {
                     const content = fs.readFileSync(path.join(targetDir, file), 'utf8');
                     const metadata = JSON.parse(content);
+                    if (!canAccess(metadata.ownerId, req.user)) continue; // 仅本人历史
                     metadata.url = `/library/${type}/${metadata.filename}`;
                     assets.push(metadata);
                 } catch (e) {
@@ -1078,11 +1085,14 @@ app.delete('/api/assets/:type/:id', async (req, res) => {
         const targetDir = type === 'images' ? IMAGES_DIR : VIDEOS_DIR;
         const metaPath = path.join(targetDir, `${id}.json`);
 
-        // Read metadata to get the actual filename (may differ from ID)
+        // Read metadata to get the actual filename (may differ from ID) + check ownership
         let assetFilename = null;
         if (fs.existsSync(metaPath)) {
             try {
                 const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                if (!canAccess(metadata.ownerId, req.user)) {
+                    return res.status(403).json({ error: '无权删除该素材' });
+                }
                 assetFilename = metadata.filename;
             } catch (e) {
                 console.warn(`Could not read metadata for ${id}:`, e.message);
@@ -1135,6 +1145,7 @@ app.post('/api/assets/:type/clean', async (req, res) => {
             const metaPath = path.join(targetDir, file);
             try {
                 const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                if (!canAccess(meta.ownerId, req.user)) continue; // 只清理本人的
                 if (cutoff) {
                     const created = new Date(meta.createdAt).getTime();
                     // createdAt 无效或晚于截止时间的保留（NaN 比较为 false，自动保留）
@@ -1559,7 +1570,7 @@ if (process.env.NODE_ENV === 'production') {
 // then backfill ownerId on pre-auth data so it stays accessible (P1).
 try {
     const adminId = bootstrapAdmin();
-    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR] });
+    migrateOwnership({ adminId, dirs: [WORKFLOWS_DIR, EDIT_PROJECTS_DIR, CHATS_DIR, IMAGES_DIR, VIDEOS_DIR] });
 } catch (e) {
     console.error('[auth] bootstrap/migrate failed:', e.message);
 }

@@ -197,6 +197,7 @@ router.post('/generate-image', async (req, res) => {
         // Save metadata (id must match the metadata filename for delete to work)
         const metadata = {
             id: metadataId,  // Must match the filename for delete API to find it
+            ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
             prompt: prompt,
             title: title || '',  // 节点标题（如「分镜 01」），剪辑页素材列表用于区分镜头
@@ -412,6 +413,7 @@ router.post('/generate-video', async (req, res) => {
         // Save metadata (id must match the metadata filename for delete to work)
         const metadata = {
             id: metadataId,  // Must match the filename for delete API to find it
+            ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
             prompt: prompt,
             title: title || '',  // 节点标题（如「镜头 01 视频」），剪辑页素材列表用于区分镜头
