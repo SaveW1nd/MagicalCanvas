@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { LoginPage } from './components/auth/LoginPage';
 import { AdminConsole } from './components/admin/AdminConsole';
+import { GlobalTooltip } from './components/ui/GlobalTooltip';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -33,6 +34,7 @@ root.render(
     <ThemeProvider>
       <AuthProvider>
         <Gate />
+        <GlobalTooltip />
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>
