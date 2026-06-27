@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput } from 'lucide-react';
+import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput, Globe, Lock, FolderPlus } from 'lucide-react';
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
+import { showToast } from './Toast';
 
 interface LibraryAsset {
     id: string;
@@ -8,6 +9,10 @@ interface LibraryAsset {
     category: string;
     url: string;
     type: 'image' | 'video';
+    visibility?: 'private' | 'public';
+    sourceAssetId?: string | null;
+    publishedBy?: string;
+    mine?: boolean;
 }
 
 interface AssetLibraryPanelProps {
@@ -38,6 +43,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 }) => {
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [assets, setAssets] = useState<LibraryAsset[]>([]);
+    const [publicAssets, setPublicAssets] = useState<LibraryAsset[]>([]);
+    const [activeTab, setActiveTab] = useState<'my' | 'public'>('my');
     const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
     const [loading, setLoading] = useState(false);
 
@@ -45,8 +52,18 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         if (isOpen) {
             fetchLibrary();
             fetchCategories();
+            fetchPublic();
         }
     }, [isOpen]);
+
+    const fetchPublic = async () => {
+        try {
+            const res = await fetch('/api/library/public');
+            if (res.ok) setPublicAssets(await res.json());
+        } catch (error) {
+            console.error('Failed to load public library:', error);
+        }
+    };
 
     const fetchLibrary = async () => {
         setLoading(true);
@@ -189,6 +206,29 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         }
     };
 
+    // 发布素材到公共库
+    const handlePublish = async (id: string) => {
+        try {
+            const res = await fetch(`/api/library/${id}/publish`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) { showAppAlert(data.error || '发布失败'); return; }
+            setAssets(prev => prev.map(a => a.id === id ? { ...a, visibility: 'public' } : a));
+            await fetchPublic();
+            showToast('已发布到公共库', 'success');
+        } catch (_) { showAppAlert('发布失败'); }
+    };
+
+    // 从公共库收藏到自己库(零拷贝)
+    const handleAddFromPublic = async (publicId: string) => {
+        try {
+            const res = await fetch(`/api/library/from-public/${publicId}`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) { showAppAlert(data.error || '收藏失败'); return; }
+            await fetchLibrary();
+            showToast(data.already ? '已在你的素材库中' : '已加入我的素材库', 'success');
+        } catch (_) { showAppAlert('收藏失败'); }
+    };
+
     if (!isOpen) return null;
 
     // Theme helper
@@ -225,6 +265,11 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         onAddCategory={handleAddCategory}
                         onDeleteCategory={handleDeleteCategory}
                         onChangeCategory={handleChangeCategory}
+                        activeTab={activeTab}
+                        setActiveTab={setActiveTab}
+                        publicAssets={publicAssets}
+                        onPublish={handlePublish}
+                        onAddFromPublic={handleAddFromPublic}
                     />
                 </div>
                 {/* Click outside to close */}
@@ -254,6 +299,12 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 categories={categories}
                 onAddCategory={handleAddCategory}
                 onDeleteCategory={handleDeleteCategory}
+                onChangeCategory={handleChangeCategory}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                publicAssets={publicAssets}
+                onPublish={handlePublish}
+                onAddFromPublic={handleAddFromPublic}
             />
         </div>
     );
@@ -264,7 +315,8 @@ const AssetLibraryContent = ({
     selectedCategory, setSelectedCategory,
     assets, loading, onSelectAsset, onDeleteAsset, onDeleteMany, variant, canvasTheme = 'dark',
     importing, onImportClick,
-    categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory, onChangeCategory
+    categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory, onChangeCategory,
+    activeTab = 'my', setActiveTab, publicAssets = [], onPublish, onAddFromPublic
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [categoryMenuId, setCategoryMenuId] = useState<string | null>(null);
@@ -276,7 +328,11 @@ const AssetLibraryContent = ({
     const [batchDeleting, setBatchDeleting] = useState(false);
     const isDark = canvasTheme === 'dark';
 
-    const allCategories: string[] = ['All', ...categories];
+    const isPublicTab = activeTab === 'public';
+    // 公共页:数据源 = 公共素材；分类 pill 由公共素材推导
+    const sourceAssets: any[] = isPublicTab ? publicAssets : assets;
+    const publicCategories: string[] = Array.from(new Set((publicAssets as any[]).map(a => a.category).filter(Boolean)));
+    const allCategories: string[] = ['All', ...(isPublicTab ? publicCategories : categories)];
 
     const submitNewCategory = () => {
         const name = newCategoryName.trim();
@@ -308,7 +364,7 @@ const AssetLibraryContent = ({
         exitManageMode();
     };
 
-    const filteredAssets = assets.filter((asset: any) =>
+    const filteredAssets = sourceAssets.filter((asset: any) =>
         selectedCategory === 'All' || asset.category === selectedCategory
     );
 
@@ -331,6 +387,24 @@ const AssetLibraryContent = ({
         <>
 
             <div className="p-4 flex flex-col gap-4 h-full overflow-hidden">
+                {/* 我的 / 公共 切换 */}
+                <div className="flex items-center gap-1 shrink-0">
+                    <button
+                        onClick={() => { setActiveTab?.('my'); setSelectedCategory('All'); }}
+                        title="我的素材"
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${!isPublicTab ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
+                    >
+                        <Lock size={14} /> 我的素材
+                    </button>
+                    <button
+                        onClick={() => { setActiveTab?.('public'); setSelectedCategory('All'); exitManageMode(); }}
+                        title="公共素材"
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${isPublicTab ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
+                    >
+                        <Globe size={14} /> 公共素材
+                    </button>
+                </div>
+
                 {/* Filters + 导入 */}
                 <div className="flex items-center gap-2 shrink-0">
                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide flex-1 min-w-0 items-center">
@@ -346,7 +420,7 @@ const AssetLibraryContent = ({
                                     }`}
                             >
                                 {cat}
-                                {cat !== 'All' && (
+                                {cat !== 'All' && !isPublicTab && (
                                     <span
                                         onClick={(e) => { e.stopPropagation(); onDeleteCategory?.(cat); }}
                                         className="ml-1 -mr-1.5 w-4 h-4 rounded-full hidden group-hover/cat:inline-flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-red-500 hover:!text-white transition-colors"
@@ -357,7 +431,7 @@ const AssetLibraryContent = ({
                                 )}
                             </button>
                         ))}
-                        {addingCategory ? (
+                        {!isPublicTab && (addingCategory ? (
                             <input
                                 autoFocus
                                 value={newCategoryName}
@@ -375,9 +449,9 @@ const AssetLibraryContent = ({
                             >
                                 <Plus size={12} /> 分类
                             </button>
-                        )}
+                        ))}
                     </div>
-                    {manageMode ? (
+                    {isPublicTab ? null : manageMode ? (
                         <div className="flex items-center gap-1.5 mb-2 shrink-0">
                             <button
                                 onClick={() => {
@@ -468,8 +542,8 @@ const AssetLibraryContent = ({
                                     <span className="text-white text-xs font-medium truncate">{asset.name}</span>
                                 </div>
 
-                                {/* 改分类(非多选模式) */}
-                                {!manageMode && (
+                                {/* 改分类(我的页·非多选模式) */}
+                                {!manageMode && !isPublicTab && (
                                     <div className="absolute top-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
                                         <button
                                             className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
@@ -494,8 +568,63 @@ const AssetLibraryContent = ({
                                     </div>
                                 )}
 
-                                {/* Delete Button or Confirmation（多选模式下隐藏单删） */}
-                                {manageMode ? null : deleteConfirmId === asset.id ? (
+                                {/* 公共页:加入我的库 / 我发布的 */}
+                                {isPublicTab && (
+                                    <div className="absolute top-1 right-1 z-10" onClick={(e) => e.stopPropagation()}>
+                                        {asset.mine ? (
+                                            <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5" title="你发布的素材">
+                                                <Globe size={10} />我发布的
+                                            </span>
+                                        ) : (
+                                            <button
+                                                title="加入我的素材库"
+                                                onClick={(e) => { e.stopPropagation(); onAddFromPublic?.(asset.id); }}
+                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-600/80"
+                                            >
+                                                <FolderPlus size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* 我的页:发布 + 删除（多选/删除确认时除外） */}
+                                {!isPublicTab && !manageMode && deleteConfirmId !== asset.id && (
+                                    <div className="absolute top-1 right-1 flex items-center gap-1 z-10" onClick={(e) => e.stopPropagation()}>
+                                        {asset.visibility === 'public' ? (
+                                            <span className="px-1.5 py-0.5 rounded-md bg-green-600/80 text-white text-[10px] flex items-center gap-0.5" title="已发布到公共库，仅管理员可删">
+                                                <Globe size={10} />公共
+                                            </span>
+                                        ) : !asset.sourceAssetId ? (
+                                            <button
+                                                title="发布到公共库"
+                                                onClick={(e) => { e.stopPropagation(); onPublish?.(asset.id); }}
+                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-600/80"
+                                            >
+                                                <Globe size={14} />
+                                            </button>
+                                        ) : null}
+                                        {asset.visibility === 'public' ? (
+                                            <button
+                                                title="已发布，仅管理员可删"
+                                                disabled
+                                                className="p-1.5 bg-black/40 text-neutral-500 rounded-md opacity-0 group-hover:opacity-100 cursor-not-allowed"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                title="删除素材"
+                                                onClick={(e) => handleDeleteClick(e, asset.id)}
+                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* 删除确认覆盖层（我的页） */}
+                                {!isPublicTab && !manageMode && deleteConfirmId === asset.id && (
                                     <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-2 z-20 animate-in fade-in duration-200" onClick={(e) => e.stopPropagation()}>
                                         <span className="text-white text-xs font-medium">删除？</span>
                                         <div className="flex gap-2">
@@ -513,14 +642,6 @@ const AssetLibraryContent = ({
                                             </button>
                                         </div>
                                     </div>
-                                ) : (
-                                    <button
-                                        className="absolute top-1 right-1 p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80 z-10"
-                                        onClick={(e) => handleDeleteClick(e, asset.id)}
-                                        title="删除素材"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
                                 )}
                             </div>
                         ))
