@@ -1513,14 +1513,19 @@ app.post('/api/trim-video', async (req, res) => {
         // Strip query string from URL (e.g., ?t=123456 cache busters)
         const cleanVideoUrl = videoUrl.split('?')[0];
 
-        // Resolve video path from URL
+        // Resolve video path from URL. Handles per-user media
+        // (/library/users/<uid>/videos/...) as well as legacy global
+        // paths (/library/videos/...) via the shared resolver.
         let inputPath;
-        if (cleanVideoUrl.startsWith('/library/videos/')) {
-            inputPath = path.join(VIDEOS_DIR, cleanVideoUrl.replace('/library/videos/', ''));
+        if (cleanVideoUrl.startsWith('/library/')) {
+            inputPath = libUrlToPath(LIBRARY_DIR, cleanVideoUrl);
         } else if (cleanVideoUrl.startsWith('http')) {
             // For remote URLs, we'd need to download first - for now, only local library videos
             return res.status(400).json({ error: 'Only local library videos can be trimmed' });
         } else {
+            return res.status(400).json({ error: 'Invalid video URL format' });
+        }
+        if (!inputPath) {
             return res.status(400).json({ error: 'Invalid video URL format' });
         }
 
