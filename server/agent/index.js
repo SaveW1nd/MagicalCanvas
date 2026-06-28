@@ -18,6 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getKey } from "../config.js";
 import { gpt2apiChat, requestChatCompletion } from "../services/gpt2api.js";
+import { ossUrlToLibraryRel, uploadLibraryRel, ossEnabled, mimeFromName } from '../utils/ossUploader.js';
 import { AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
 import { TOOL_SCHEMAS, TOOL_NAMES } from "./tools/index.js";
 import { canAccess } from "../auth/ownership.js";
@@ -106,6 +107,22 @@ function resolveImageToBase64(imageInput) {
         return imageInput;
     }
 
+    // OSS URL → 映射回本地 library 文件直接读盘（避免回源拉取）
+    if (typeof imageInput === 'string' && imageInput.startsWith('http')) {
+        try {
+            const rel = ossUrlToLibraryRel(imageInput);
+            if (rel) {
+                const abs = path.join(LIBRARY_DIR, rel);
+                if (fs.existsSync(abs)) {
+                    const buf = fs.readFileSync(abs);
+                    const ext = path.extname(abs).toLowerCase();
+                    const mime = { '.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.mp4':'video/mp4','.webm':'video/webm' }[ext] || 'image/png';
+                    return `data:${mime};base64,${buf.toString('base64')}`;
+                }
+            }
+        } catch (e) { /* fall through */ }
+    }
+
     // Handle full URL or path
     let cleanPath = imageInput;
     try {
@@ -140,7 +157,7 @@ function resolveImageToBase64(imageInput) {
  * 把聊天附件持久化：库内/网络 URL 直接引用；base64（含 data URL）写入 library/images
  * 并返回 /library/images/... 路径。失败返回 null（该附件历史里不显示但不影响发送）。
  */
-function persistMediaToLibrary(m, idx) {
+async function persistMediaToLibrary(m, idx) {
     try {
         // 已有可持久引用的 URL（画布节点拖入的素材）
         if (m.url && !m.url.startsWith('data:')) {
@@ -170,8 +187,15 @@ function persistMediaToLibrary(m, idx) {
         const dir = m.type === 'video' ? path.join(LIBRARY_DIR, 'videos') : IMAGES_DIR;
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const filename = `chat_${Date.now()}_${idx}.${ext}`;
-        fs.writeFileSync(path.join(dir, filename), base64Data, 'base64');
-        return `/library/${m.type === 'video' ? 'videos' : 'images'}/${filename}`;
+        const buffer = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(path.join(dir, filename), buffer);
+        const relKind = m.type === 'video' ? 'videos' : 'images';
+        let outUrl = `/library/${relKind}/${filename}`;
+        if (ossEnabled()) {
+            try { outUrl = await uploadLibraryRel(buffer, `${relKind}/${filename}`, mimeFromName(filename)); }
+            catch (e) { console.warn('[oss] chat media upload failed:', e.message); }
+        }
+        return outUrl;
     } catch (err) {
         console.warn('[Chat] persist media failed:', err.message);
         return null;
@@ -502,7 +526,7 @@ export async function sendMessage(sessionId, content, media, onDelta, ownerId) {
 
     // 持久化用户消息（干净视图：原始文字 + 媒体落盘路径）
     const persistedMedia = (media && Array.isArray(media))
-        ? media.map((m, i) => ({ ...m, url: persistMediaToLibrary(m, i), base64: undefined })).filter(m => !!m.url)
+        ? (await Promise.all(media.map(async (m, i) => ({ ...m, url: await persistMediaToLibrary(m, i), base64: undefined })))).filter(m => !!m.url)
         : undefined;
     session.messages.push({
         role: 'user',

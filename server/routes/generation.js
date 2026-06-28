@@ -211,8 +211,8 @@ router.post('/generate-image', async (req, res) => {
 
         // Save media into the owner's namespaced dir (P1：路径含 ownerId，URL 不可跨用户猜测)
         const ownerImagesDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'images');
-        const saved = saveBufferToFile(imageBuffer, ownerImagesDir, 'img', imageFormat);
-        const resultUrl = `/library/users/${req.user?.id || '_anon'}/images/${saved.filename}`;
+        const saved = await saveBufferToFile(imageBuffer, ownerImagesDir, 'img', imageFormat);
+        const resultUrl = saved.url;
 
         // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
         // 否则同一节点反复生成会互相覆盖，历史只剩最后一次）。nodeId 仅作为字段
@@ -432,8 +432,8 @@ router.post('/generate-video', async (req, res) => {
 
         // Save media into the owner's namespaced dir (P1)
         const ownerVideosDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'videos');
-        const saved = saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
-        const resultUrl = `/library/users/${req.user?.id || '_anon'}/videos/${saved.filename}`;
+        const saved = await saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
+        const resultUrl = saved.url;
 
         // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
         // 否则同一节点反复生成会互相覆盖）。nodeId 仅作为字段保存供恢复用。

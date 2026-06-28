@@ -26,6 +26,7 @@ import { canAccess } from './auth/ownership.js';
 import { migrateOwnership } from './db/migrate-ownership.js';
 import { seedRegistryFromConfig, ensureAsrSeed } from './db/registry.js';
 import { userMediaDir, libUrlToPath } from './utils/imageHelpers.js';
+import { uploadLibraryRel, ossEnabled, mimeFromName } from './utils/ossUploader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1138,12 +1139,18 @@ app.post('/api/assets/:type', async (req, res) => {
         // 媒体存入用户分目录(不可猜)，文件名带随机后缀；元数据留在 flat 目录供按 owner 列出
         const mediaName = `${id}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const ownerDir = userMediaDir(LIBRARY_DIR, req.user.id, type);
-        const url = `/library/users/${req.user.id}/${type}/${mediaName}`;
+        let url = `/library/users/${req.user.id}/${type}/${mediaName}`;   // 兜底本地
         const metaFilename = `${id}.json`;
 
-        // Save the asset file
+        // Save the asset file (本地)
         const base64Data = data.replace(/^data:[^;]+;base64,/, '');
-        fs.writeFileSync(path.join(ownerDir, mediaName), base64Data, 'base64');
+        const assetBuf = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(path.join(ownerDir, mediaName), assetBuf);
+        // 双写 OSS(失败保留本地 url)
+        if (ossEnabled()) {
+            try { url = await uploadLibraryRel(assetBuf, `users/${req.user.id}/${type}/${mediaName}`, mimeFromName(mediaName)); }
+            catch (e) { console.warn('[oss] /api/library upload failed:', e.message); }
+        }
 
         // Save metadata (flat dir for listing; url 指向分目录媒体)
         const metadata = {
