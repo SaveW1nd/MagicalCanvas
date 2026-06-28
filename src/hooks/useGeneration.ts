@@ -162,9 +162,9 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     klingSubjectIntensity: node.klingSubjectIntensity
                 });
 
-                // Add cache-busting parameter to force browser to fetch new image
-                // (Backend uses nodeId as filename, so URL is the same for regenerated images)
-                const resultUrl = `${rawResultUrl}?t=${Date.now()}`;
+                // 媒体文件名唯一(每次生成新文件名),URL 必变,无需 cache-bust;
+                // 去掉 ?t= 以便浏览器/OSS 长缓存生效(刷新走缓存,不重复回源)。
+                const resultUrl = rawResultUrl;
 
                 // Detect actual image dimensions (for display purposes only)
                 const { resultAspectRatio } = await getImageAspectRatio(resultUrl);
@@ -211,8 +211,8 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                 });
 
                 if (result.success && result.resultUrl) {
-                    // Add cache-busting parameter
-                    const resultUrl = `${result.resultUrl}?t=${Date.now()}`;
+                    // 唯一文件名,无需 cache-bust(去掉 ?t= 让长缓存生效)
+                    const resultUrl = result.resultUrl;
 
                     // Detect actual image dimensions
                     const { resultAspectRatio } = await getImageAspectRatio(resultUrl);
@@ -345,9 +345,8 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     title: node.title || ''
                 });
 
-                // Add cache-busting parameter to force browser to fetch new video
-                // (Backend uses nodeId as filename, so URL is the same for regenerated videos)
-                const resultUrl = `${rawResultUrl}?t=${Date.now()}`;
+                // 视频文件名唯一,URL 必变,无需 cache-bust(去掉 ?t= 让长缓存生效)
+                const resultUrl = rawResultUrl;
 
                 // Extract last frame for chaining
                 const lastFrame = await extractVideoLastFrame(resultUrl);
