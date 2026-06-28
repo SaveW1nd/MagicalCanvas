@@ -441,7 +441,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                                                 {/* Hover 操作层加暗，让底部图标按钮更清晰 */}
                                                 <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                                                 {/* 操作按钮（图标 + hover 原生提示，风格与删除一致） */}
-                                                <div className="absolute bottom-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                <div className="absolute top-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleSelectAsset(asset); }}
                                                         className="p-1 bg-black/50 hover:bg-blue-500 rounded-md transition-all"
