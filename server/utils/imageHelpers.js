@@ -6,6 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { uploadLibraryRel, ossEnabled, mimeFromName, ossUrlToLibraryRel } from './ossUploader.js';
 
 // ============================================================================
 // PER-OWNER MEDIA PATHS (P1：媒体按用户分目录，路径含 UUID 不可猜)
@@ -46,6 +47,23 @@ export function resolveImageToBase64(input) {
 
     // Normalize input - extract path from full URL if needed
     let filePath = input;
+
+    // OSS 公开 URL(本画布前缀)→ 映射到本地双写副本,读本地即可(快、且保持同步)
+    if (input.startsWith('http')) {
+        try {
+            const rel = ossUrlToLibraryRel(input);   // 非本前缀返回 null
+            if (rel) {
+                const libraryDir = process.env.LIBRARY_DIR || path.join(process.cwd(), 'library');
+                const abs = path.join(libraryDir, rel);
+                if (fs.existsSync(abs)) {
+                    const buf = fs.readFileSync(abs);
+                    const ext = path.extname(abs).toLowerCase();
+                    const mime = { '.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.mp4':'video/mp4','.webm':'video/webm' }[ext] || 'image/png';
+                    return `data:${mime};base64,${buf.toString('base64')}`;
+                }
+            }
+        } catch (e) { /* 落到下方通用处理 */ }
+    }
 
     // Handle full URLs like http://localhost:3001/library/images/...
     if (input.startsWith('http://') || input.startsWith('https://')) {
@@ -140,64 +158,52 @@ export function mapAspectRatio(ratio) {
 // ============================================================================
 
 /**
- * Save buffer to file and return URL
- * @param {Buffer} buffer - Data buffer
- * @param {string} dir - Directory to save to
- * @param {string} prefix - Filename prefix (e.g., 'img', 'vid')
- * @param {string} extension - File extension (e.g., 'png', 'mp4')
- * @param {string} [customId] - Optional custom ID to use instead of generating one
- * @returns {{ id: string, path: string, url: string }}
+ * 写本地 + 上传 OSS,返回 OSS 公开 URL(失败回退本地 /library URL)。
+ * @returns {Promise<{ id, path, filename, localUrl, url }>}
  */
-export function saveBufferToFile(buffer, dir, prefix, extension, customId) {
+export async function saveBufferToFile(buffer, dir, prefix, extension, customId) {
     const id = customId || `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const filename = `${id}.${extension}`;
     const filePath = path.join(dir, filename);
-
     fs.writeFileSync(filePath, buffer);
 
-    // Determine URL path based on directory name
-    const dirName = path.basename(dir);
-    const url = `/library/${dirName}/${filename}`;
+    const libraryDir = process.env.LIBRARY_DIR || path.join(process.cwd(), 'library');
+    const rel = path.relative(libraryDir, filePath).split(path.sep).join('/'); // users/<id>/images/<file> 或 images/<file>
+    const localUrl = `/library/${rel}`;
 
-    return { id, path: filePath, url, filename };
+    let url = localUrl;
+    if (ossEnabled()) {
+        try {
+            url = await uploadLibraryRel(buffer, rel, mimeFromName(filename));
+        } catch (e) {
+            console.warn('[oss] upload failed, fallback local:', e.message);
+        }
+    }
+    return { id, path: filePath, filename, localUrl, url };
 }
 
 /**
- * Save base64 data URL to file and return library URL
- * Used to sanitize workflow nodes before saving
- * 
- * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)
- * @param {string} imagesDir - Directory for saving images
- * @param {string} videosDir - Directory for saving videos
- * @returns {string} File URL or original value if not a data URL
+ * Save base64 data URL to file (本地+OSS 双写),返回 OSS URL(失败回退本地);非 data URL 原样返回。
  */
-export function saveBase64ToFile(dataUrl, imagesDir, videosDir) {
+export async function saveBase64ToFile(dataUrl, imagesDir, videosDir) {
     if (!dataUrl || typeof dataUrl !== 'string') return dataUrl;
-
-    // Skip if already a file URL
     if (!dataUrl.startsWith('data:')) return dataUrl;
 
-    // Match image data URLs
     const imageMatch = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,(.+)$/);
     if (imageMatch) {
         const ext = imageMatch[1] === 'jpeg' ? 'jpg' : imageMatch[1];
-        const base64Data = imageMatch[2];
-        const buffer = Buffer.from(base64Data, 'base64');
-        const saved = saveBufferToFile(buffer, imagesDir, 'wf_img', ext);
-        console.log(`  Workflow sanitize: saved image ${saved.filename} (${(buffer.length / 1024).toFixed(1)} KB)`);
+        const buffer = Buffer.from(imageMatch[2], 'base64');
+        const saved = await saveBufferToFile(buffer, imagesDir, 'wf_img', ext);
+        console.log(`  Workflow sanitize: saved image ${saved.filename}`);
         return saved.url;
     }
-
-    // Match video data URLs
     const videoMatch = dataUrl.match(/^data:video\/(mp4|webm);base64,(.+)$/);
     if (videoMatch) {
         const ext = videoMatch[1];
-        const base64Data = videoMatch[2];
-        const buffer = Buffer.from(base64Data, 'base64');
-        const saved = saveBufferToFile(buffer, videosDir, 'wf_vid', ext);
-        console.log(`  Workflow sanitize: saved video ${saved.filename} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+        const buffer = Buffer.from(videoMatch[2], 'base64');
+        const saved = await saveBufferToFile(buffer, videosDir, 'wf_vid', ext);
+        console.log(`  Workflow sanitize: saved video ${saved.filename}`);
         return saved.url;
     }
-
     return dataUrl;
 }
