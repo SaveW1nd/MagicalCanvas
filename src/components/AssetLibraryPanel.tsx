@@ -4,6 +4,7 @@ import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput, Globe, Lock, Fold
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 import { showToast } from './Toast';
 import { Tip } from './ui/Tip';
+import { ExpandedMediaModal } from './modals/ExpandedMediaModal';
 
 interface LibraryAsset {
     id: string;
@@ -329,6 +330,7 @@ const AssetLibraryContent = ({
     const [manageMode, setManageMode] = useState(false);
     const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
     const [batchDeleting, setBatchDeleting] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 查看大图/视频
     const isDark = canvasTheme === 'dark';
 
     const isPublicTab = activeTab === 'public';
@@ -521,10 +523,11 @@ const AssetLibraryContent = ({
                         filteredAssets.map((asset: any) => (
                             <div
                                 key={asset.id}
-                                className={`group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border ${isPublicTab ? 'cursor-default' : 'cursor-pointer'} ${manageMode && checkedIds.has(asset.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-neutral-800 hover:border-neutral-600'}`}
+                                className={`group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border cursor-pointer ${manageMode && checkedIds.has(asset.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-neutral-800 hover:border-neutral-600'}`}
                                 onClick={() => {
-                                    if (isPublicTab) return; // 公共页:点卡片不插入画布,只用「加入我的库」按钮
-                                    manageMode ? toggleChecked(asset.id) : onSelectAsset(asset.url, asset.type);
+                                    // 多选模式(仅我的页):点击为勾选；否则点击=查看大图(加到画布走 + 按钮)
+                                    if (!isPublicTab && manageMode) { toggleChecked(asset.id); return; }
+                                    setPreviewUrl(asset.url);
                                 }}
                             >
                                 {/* 多选模式：左上角勾选框 */}
@@ -547,6 +550,20 @@ const AssetLibraryContent = ({
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 pointer-events-none">
                                     <span className="text-white text-xs font-medium truncate">{asset.name}</span>
                                 </div>
+
+                                {/* 我的页:添加到画布(点击卡片=查看,这里才是加到画布) */}
+                                {!isPublicTab && !manageMode && (
+                                    <div className="absolute bottom-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
+                                        <Tip label="添加到画布">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onSelectAsset(asset.url, asset.type); }}
+                                                className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/80"
+                                            >
+                                                <Plus size={14} />
+                                            </button>
+                                        </Tip>
+                                    </div>
+                                )}
 
                                 {/* 改分类(我的页·非多选模式) */}
                                 {!manageMode && !isPublicTab && (
@@ -677,6 +694,9 @@ const AssetLibraryContent = ({
                     )}
                 </div>
             </div>
+
+            {/* 查看大图/视频（缩放 + 平移） */}
+            <ExpandedMediaModal mediaUrl={previewUrl} onClose={() => setPreviewUrl(null)} />
         </>
     );
 };

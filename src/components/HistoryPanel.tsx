@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, Trash2, Maximize2, Minimize2, Image as ImageIcon, Video, Plus, FolderPlus, Eye } from 'lucide-react';
+import { Loader2, Trash2, Maximize2, Minimize2, Image as ImageIcon, Video, Plus, FolderPlus } from 'lucide-react';
 import { ExpandedMediaModal } from './modals/ExpandedMediaModal';
 
 // ============================================================================
@@ -415,7 +415,8 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                                         {groupedAssets[date].map(asset => (
                                             <div
                                                 key={asset.id}
-                                                className={`aspect-square rounded-lg overflow-hidden transition-all group relative ${isDark ? 'bg-neutral-900' : 'bg-neutral-100'}`}
+                                                onClick={() => setPreviewUrl(asset.url)}
+                                                className={`aspect-square rounded-lg overflow-hidden transition-all group relative cursor-pointer ${isDark ? 'bg-neutral-900' : 'bg-neutral-100'}`}
                                             >
                                                 {activeTab === 'images' ? (
                                                     <img
@@ -441,13 +442,6 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                                                 <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                                                 {/* 操作按钮（图标 + hover 原生提示，风格与删除一致） */}
                                                 <div className="absolute bottom-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); setPreviewUrl(asset.url); }}
-                                                        className="p-1 bg-black/50 hover:bg-black/70 rounded-md transition-all"
-                                                        title="查看"
-                                                    >
-                                                        <Eye size={12} className="text-white" />
-                                                    </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleSelectAsset(asset); }}
                                                         className="p-1 bg-black/50 hover:bg-blue-500 rounded-md transition-all"
