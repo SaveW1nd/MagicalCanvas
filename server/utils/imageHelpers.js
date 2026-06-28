@@ -19,13 +19,20 @@ export function userMediaDir(libraryDir, ownerId, kind) {
     return dir;
 }
 
-/** /library/... 形式的 URL → 磁盘绝对路径(兼容旧 flat 路径与新分目录路径)；非法返回 null */
+/** /library/... 或本画布 OSS 公开 URL → 磁盘绝对路径(兼容旧 flat 路径与新分目录路径)；非法返回 null */
 export function libUrlToPath(libraryDir, url) {
     const s = String(url || '');
-    if (!s.startsWith('/library/')) return null;
-    const rel = s.slice('/library/'.length).split('?')[0];
-    if (rel.includes('..')) return null; // 防穿越
-    return path.join(libraryDir, decodeURIComponent(rel));
+    if (s.startsWith('/library/')) {
+        const rel = s.slice('/library/'.length).split('?')[0];
+        if (rel.includes('..')) return null; // 防穿越
+        return path.join(libraryDir, decodeURIComponent(rel));
+    }
+    // 本画布 OSS 公开 URL → 映射到本地双写副本
+    if (s.startsWith('http')) {
+        const rel = ossUrlToLibraryRel(s);
+        if (rel && !rel.includes('..')) return path.join(libraryDir, decodeURIComponent(rel));
+    }
+    return null;
 }
 
 // ============================================================================

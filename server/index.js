@@ -1521,17 +1521,10 @@ app.post('/api/trim-video', async (req, res) => {
         const cleanVideoUrl = videoUrl.split('?')[0];
 
         // Resolve video path from URL. Handles per-user media
-        // (/library/users/<uid>/videos/...) as well as legacy global
-        // paths (/library/videos/...) via the shared resolver.
-        let inputPath;
-        if (cleanVideoUrl.startsWith('/library/')) {
-            inputPath = libUrlToPath(LIBRARY_DIR, cleanVideoUrl);
-        } else if (cleanVideoUrl.startsWith('http')) {
-            // For remote URLs, we'd need to download first - for now, only local library videos
-            return res.status(400).json({ error: 'Only local library videos can be trimmed' });
-        } else {
-            return res.status(400).json({ error: 'Invalid video URL format' });
-        }
+        // (/library/users/<uid>/videos/...), legacy global paths
+        // (/library/videos/...) and 本画布 OSS 公开 URL（映射到本地双写副本）
+        // via the shared OSS-aware resolver.
+        const inputPath = libUrlToPath(LIBRARY_DIR, cleanVideoUrl);
         if (!inputPath) {
             return res.status(400).json({ error: 'Invalid video URL format' });
         }
