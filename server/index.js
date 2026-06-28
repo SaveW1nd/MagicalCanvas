@@ -1013,16 +1013,13 @@ app.post('/api/gemini/describe-image', async (req, res) => {
             console.log(`[Gemini DescribeV2] Cleaned path: ${cleanUrl}`);
 
             if (cleanUrl.startsWith('/library/')) {
-                // Need to read the file from disk
-                // Convert URL path to system path
-                let fullPath = '';
-
-                if (cleanUrl.startsWith('/library/images/')) {
-                    const relativePath = cleanUrl.replace('/library/images/', '');
-                    fullPath = path.join(IMAGES_DIR, relativePath);
-                } else if (cleanUrl.startsWith('/library/videos/')) {
+                // Convert URL path to system path. Handles per-user media
+                // (/library/users/<uid>/images/...) as well as legacy global
+                // paths (/library/images/...) via the shared resolver.
+                if (/\.(mp4|webm|mov|m4v)$/i.test(cleanUrl)) {
                     return res.status(400).json({ error: 'Video description not directly supported, use a frame.' });
                 }
+                const fullPath = libUrlToPath(LIBRARY_DIR, cleanUrl) || '';
 
                 console.log(`[Gemini DescribeV2] Resolved path: ${fullPath}`);
 
