@@ -551,9 +551,9 @@ const AssetLibraryContent = ({
                                     <span className="text-white text-xs font-medium truncate">{asset.name}</span>
                                 </div>
 
-                                {/* 我的页:添加到画布(点击卡片=查看,这里才是加到画布) */}
-                                {!isPublicTab && !manageMode && (
-                                    <div className="absolute bottom-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
+                                {/* 我的页·非多选:左上 = 添加到画布 + 改分类(点击卡片=查看) */}
+                                {!manageMode && !isPublicTab && (
+                                    <div className="absolute top-1 left-1 z-10 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                         <Tip label="添加到画布">
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); onSelectAsset(asset.url, asset.type); }}
@@ -562,12 +562,6 @@ const AssetLibraryContent = ({
                                                 <Plus size={14} />
                                             </button>
                                         </Tip>
-                                    </div>
-                                )}
-
-                                {/* 改分类(我的页·非多选模式) */}
-                                {!manageMode && !isPublicTab && (
-                                    <div className="absolute top-1 left-1 z-10" onClick={(e) => e.stopPropagation()}>
                                         <Tip label="改分类">
                                             <button
                                                 className="p-1.5 bg-black/60 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-neutral-700"
@@ -695,8 +689,13 @@ const AssetLibraryContent = ({
                 </div>
             </div>
 
-            {/* 查看大图/视频（缩放 + 平移） */}
-            <ExpandedMediaModal mediaUrl={previewUrl} onClose={() => setPreviewUrl(null)} />
+            {/* 查看大图/视频（缩放 + 平移）。portal 到 body：素材库面板有
+                backdrop-blur + overflow-hidden，会成为 fixed 元素的包含块并裁剪，
+                挂到 body 才能像历史面板那样全屏预览。 */}
+            {createPortal(
+                <ExpandedMediaModal mediaUrl={previewUrl} onClose={() => setPreviewUrl(null)} />,
+                document.body,
+            )}
         </>
     );
 };
