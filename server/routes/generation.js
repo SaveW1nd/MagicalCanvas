@@ -214,13 +214,14 @@ router.post('/generate-image', async (req, res) => {
         const saved = saveBufferToFile(imageBuffer, ownerImagesDir, 'img', imageFormat);
         const resultUrl = `/library/users/${req.user?.id || '_anon'}/images/${saved.filename}`;
 
-        // Determine metadata ID: use nodeId for recovery if available, otherwise use file ID
-        const metadataId = nodeId || saved.id;
-
+        // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
+        // 否则同一节点反复生成会互相覆盖，历史只剩最后一次）。nodeId 仅作为字段
+        // 保存，供 generation-status 按节点恢复。
         // Metadata stays in the flat IMAGES_DIR (so the owner-filtered history list finds it);
         // url 指向分目录后的真实媒体。
         const metadata = {
-            id: metadataId,
+            id: saved.id,
+            nodeId: nodeId || null,  // 仅用于「刷新后恢复」按节点查找，不参与历史去重
             ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
             url: resultUrl,
@@ -230,7 +231,7 @@ router.post('/generate-image', async (req, res) => {
             createdAt: new Date().toISOString(),
             type: 'images'
         };
-        fs.writeFileSync(path.join(IMAGES_DIR, `${metadataId}.json`), JSON.stringify(metadata, null, 2));
+        fs.writeFileSync(path.join(IMAGES_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
 
         console.log(`Image saved: ${resultUrl} (model: ${imageModel || 'gemini-pro'})`);
         return res.json({ resultUrl });
@@ -434,11 +435,11 @@ router.post('/generate-video', async (req, res) => {
         const saved = saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
         const resultUrl = `/library/users/${req.user?.id || '_anon'}/videos/${saved.filename}`;
 
-        // Determine metadata ID: use nodeId for recovery if available, otherwise use file ID
-        const metadataId = nodeId || saved.id;
-
+        // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
+        // 否则同一节点反复生成会互相覆盖）。nodeId 仅作为字段保存供恢复用。
         const metadata = {
-            id: metadataId,
+            id: saved.id,
+            nodeId: nodeId || null,  // 仅用于「刷新后恢复」按节点查找，不参与历史去重
             ownerId: req.user?.id,  // P1：归属当前用户
             filename: saved.filename,
             url: resultUrl,
@@ -450,7 +451,7 @@ router.post('/generate-video', async (req, res) => {
             createdAt: new Date().toISOString(),
             type: 'videos'
         };
-        fs.writeFileSync(path.join(VIDEOS_DIR, `${metadataId}.json`), JSON.stringify(metadata, null, 2));
+        fs.writeFileSync(path.join(VIDEOS_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
 
         console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
         return res.json({ resultUrl });
@@ -476,18 +477,35 @@ router.get('/generation-status/:nodeId', async (req, res) => {
         const { nodeId } = req.params;
         const { IMAGES_DIR, VIDEOS_DIR } = req.app.locals;
 
+        // 历史文件名已改为唯一 id，故按元数据里的 nodeId 字段扫描，取「最新一条」
+        // （前端再用 generationStartTime vs createdAt 防过期）。兼容旧的
+        // ${nodeId}.json 命名（那时文件名即 nodeId）。仅限本人。
+        const sameOwner = (meta) => !req.user || meta.ownerId === req.user.id || !meta.ownerId;
+        const findLatestByNode = (dir) => {
+            if (!fs.existsSync(dir)) return null;
+            let best = null;
+            for (const f of fs.readdirSync(dir)) {
+                if (!f.endsWith('.json')) continue;
+                try {
+                    const meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+                    const matches = meta.nodeId === nodeId || path.basename(f, '.json') === nodeId;
+                    if (!matches || !sameOwner(meta)) continue;
+                    if (!best || new Date(meta.createdAt).getTime() > new Date(best.createdAt).getTime()) best = meta;
+                } catch (_) { /* skip invalid json */ }
+            }
+            return best;
+        };
+
         // Check images metadata
-        const imageMetaPath = path.join(IMAGES_DIR, `${nodeId}.json`);
-        if (fs.existsSync(imageMetaPath)) {
-            const meta = JSON.parse(fs.readFileSync(imageMetaPath, 'utf8'));
-            return res.json({ status: 'success', resultUrl: `/library/images/${meta.filename}`, type: 'image', createdAt: meta.createdAt });
+        const imgMeta = findLatestByNode(IMAGES_DIR);
+        if (imgMeta) {
+            return res.json({ status: 'success', resultUrl: imgMeta.url || `/library/images/${imgMeta.filename}`, type: 'image', createdAt: imgMeta.createdAt });
         }
 
         // Check videos metadata
-        const videoMetaPath = path.join(VIDEOS_DIR, `${nodeId}.json`);
-        if (fs.existsSync(videoMetaPath)) {
-            const meta = JSON.parse(fs.readFileSync(videoMetaPath, 'utf8'));
-            return res.json({ status: 'success', resultUrl: `/library/videos/${meta.filename}`, type: 'video', createdAt: meta.createdAt });
+        const vidMeta = findLatestByNode(VIDEOS_DIR);
+        if (vidMeta) {
+            return res.json({ status: 'success', resultUrl: vidMeta.url || `/library/videos/${vidMeta.filename}`, type: 'video', createdAt: vidMeta.createdAt });
         }
 
         // 没有结果文件：区分「本进程还在生成」和「应用重启后任务已中断」
