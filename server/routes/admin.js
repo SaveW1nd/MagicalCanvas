@@ -347,6 +347,50 @@ router.post('/assets/:id/visibility', (req, res) => {
     }
 });
 
+// 重命名历史项(图/视频/工作流等):改 library/{type}/{id}.json 的 title
+router.post('/history/:type/:id/rename', (req, res) => {
+    try {
+        const { type, id } = req.params;
+        if (!HISTORY_TYPES[type]) return res.status(400).json({ error: '类型不支持' });
+        const title = String(req.body?.title ?? '').trim().slice(0, 200);
+        if (!title) return res.status(400).json({ error: '名称不能为空' });
+        const fp = path.join(req.app.locals.LIBRARY_DIR, type, `${id}.json`);
+        if (!fs.existsSync(fp)) return res.status(404).json({ error: '不存在' });
+        const d = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        d.title = title;
+        fs.writeFileSync(fp, JSON.stringify(d, null, 2));
+        res.json({ success: true, title });
+    } catch (e) { console.error('admin history rename error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// 重命名素材库素材:改 assets.json 行的 name
+router.post('/assets/:id/rename', (req, res) => {
+    try {
+        const name = String(req.body?.name ?? '').trim().slice(0, 200);
+        if (!name) return res.status(400).json({ error: '名称不能为空' });
+        const rows = readAssets(req);
+        const asset = rows.find(a => a.id === req.params.id);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        asset.name = name;
+        writeAssets(req, rows);
+        res.json({ success: true, asset });
+    } catch (e) { console.error('admin asset rename error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// 重命名公共工作流:改 library/public-workflows/{id}.json 的 title
+router.post('/public-workflows/:id/rename', (req, res) => {
+    try {
+        const title = String(req.body?.title ?? '').trim().slice(0, 200);
+        if (!title) return res.status(400).json({ error: '名称不能为空' });
+        const fp = path.join(req.app.locals.LIBRARY_DIR, 'public-workflows', `${req.params.id}.json`);
+        if (!fs.existsSync(fp)) return res.status(404).json({ error: '不存在' });
+        const d = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        d.title = title;
+        fs.writeFileSync(fp, JSON.stringify(d, null, 2));
+        res.json({ success: true, title });
+    } catch (e) { console.error('admin public-workflow rename error:', e); res.status(500).json({ error: e.message }); }
+});
+
 // 管理员删除素材(物理文件经引用护栏:被他人/公开引用则只删行)
 router.delete('/assets/:id', (req, res) => {
     try {
