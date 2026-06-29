@@ -11,6 +11,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, Trash2, Maximize2, Minimize2, Image as ImageIcon, Video, Plus, FolderPlus } from 'lucide-react';
 import { ExpandedMediaModal } from './modals/ExpandedMediaModal';
+import { useSWR, invalidateCache, getCached } from '../utils/swrCache';
+
+interface AssetPage {
+    assets: AssetMetadata[];
+    hasMore: boolean;
+    total: number;
+}
 
 // ============================================================================
 // CONSTANTS
@@ -56,11 +63,10 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
 }) => {
     // --- State ---
     const [activeTab, setActiveTab] = useState<'images' | 'videos'>('images');
-    const [assets, setAssets] = useState<AssetMetadata[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [loadingMore, setLoadingMore] = useState(false);
-    const [hasMore, setHasMore] = useState(true);
-    const [offset, setOffset] = useState(0);
+    // 已加载的页偏移量列表（驱动无限滚动的累加；每个 offset 对应一页缓存）
+    const [loadedOffsets, setLoadedOffsets] = useState<number[]>([0]);
+    // 当前正在拉取/驱动 SWR 的页偏移量（始终是已加载列表的最后一页）
+    const [pageOffset, setPageOffset] = useState(0);
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
     const [imageTotalCount, setImageTotalCount] = useState<number>(0);
     const [videoTotalCount, setVideoTotalCount] = useState<number>(0);
@@ -134,19 +140,51 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     // Theme helper
     const isDark = canvasTheme === 'dark';
 
-    // --- Fetch initial page and counts when panel opens ---
+    // --- SWR: 当前页（pageOffset）走 stale-while-revalidate 缓存 ---
+    // 命中缓存时立即返回上次结果（再次打开面板瞬间显示），同时后台刷新。
+    const listKey = isOpen ? `assets:${activeTab}:${pageOffset}` : null;
+    const { data: pageData, loading, refetch } = useSWR<AssetPage>(listKey, () =>
+        fetch(`/api/assets/${activeTab}?limit=${PAGE_SIZE}&offset=${pageOffset}`).then(r => r.json())
+    );
+
+    // 累加渲染：把已加载的每一页（从缓存读取）拼成完整列表，保持无限滚动 UX。
+    // 当前页用 pageData（含后台刷新的最新数据），其余页从缓存取。
+    const assets: AssetMetadata[] = React.useMemo(() => {
+        const out: AssetMetadata[] = [];
+        for (const off of loadedOffsets) {
+            const page = off === pageOffset
+                ? pageData
+                : (getCached(`assets:${activeTab}:${off}`) as AssetPage | undefined);
+            if (page?.assets) out.push(...page.assets);
+        }
+        return out;
+    }, [loadedOffsets, pageOffset, pageData, activeTab]);
+
+    const hasMore = pageData?.hasMore ?? true;
+    // 拉到当前页且声明还有更多时，可继续加载（避免重复触发同一页）
+    const loadingMore = loading && loadedOffsets.length > 1;
+
+    // --- Reset pagination + counts when panel opens or tab changes ---
     useEffect(() => {
         if (isOpen) {
-            // Reset pagination state for current tab
-            setAssets([]);
-            setOffset(0);
-            setHasMore(true);
-            fetchAssets(0, true);
+            // 切换 tab / 重新打开：回到第一页（缓存命中则瞬间显示，后台刷新）
+            setLoadedOffsets([0]);
+            setPageOffset(0);
 
             // Fetch total counts for both tabs
             fetchCounts();
         }
     }, [isOpen, activeTab]);
+
+    // 当前页拉取完成后，根据 total 同步计数（保留原有 tab 计数行为）
+    useEffect(() => {
+        if (!pageData) return;
+        if (activeTab === 'images') {
+            setImageTotalCount(pageData.total);
+        } else {
+            setVideoTotalCount(pageData.total);
+        }
+    }, [pageData, activeTab]);
 
     /**
      * Fetch total counts for both images and videos
@@ -173,6 +211,18 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         }
     };
 
+    /**
+     * Load more assets when scrolling: 推进到下一页 offset。
+     * 当前页已拉到、还有更多、且没在加载时，把下一页加入 loadedOffsets 并切换 pageOffset。
+     */
+    const loadMoreAssets = useCallback(() => {
+        if (loading || !hasMore || !pageData) return;
+        const nextOffset = pageOffset + pageData.assets.length;
+        if (nextOffset === pageOffset) return; // 防止空页死循环
+        setLoadedOffsets(prev => (prev.includes(nextOffset) ? prev : [...prev, nextOffset]));
+        setPageOffset(nextOffset);
+    }, [loading, hasMore, pageData, pageOffset]);
+
     // --- Intersection Observer for infinite scroll ---
     useEffect(() => {
         if (!loadMoreTriggerRef.current || loading) return;
@@ -180,7 +230,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         const observer = new IntersectionObserver(
             (entries) => {
                 const target = entries[0];
-                if (target.isIntersecting && hasMore && !loadingMore && !loading) {
+                if (target.isIntersecting && hasMore && !loading) {
                     loadMoreAssets();
                 }
             },
@@ -189,59 +239,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
 
         observer.observe(loadMoreTriggerRef.current);
         return () => observer.disconnect();
-    }, [hasMore, loadingMore, loading, offset]);
-
-    /**
-     * Fetch assets with pagination
-     * @param pageOffset - Offset to fetch from
-     * @param isInitial - Whether this is the initial fetch (shows full loader)
-     */
-    const fetchAssets = async (pageOffset: number, isInitial: boolean = false) => {
-        if (isInitial) {
-            setLoading(true);
-        } else {
-            setLoadingMore(true);
-        }
-
-        try {
-            const response = await fetch(
-                `/api/assets/${activeTab}?limit=${PAGE_SIZE}&offset=${pageOffset}`
-            );
-            if (response.ok) {
-                const data = await response.json();
-
-                if (isInitial) {
-                    setAssets(data.assets);
-                } else {
-                    setAssets(prev => [...prev, ...data.assets]);
-                }
-
-                setHasMore(data.hasMore);
-                setOffset(pageOffset + data.assets.length);
-
-                // Update total counts
-                if (activeTab === 'images') {
-                    setImageTotalCount(data.total);
-                } else {
-                    setVideoTotalCount(data.total);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to fetch assets:', error);
-        } finally {
-            setLoading(false);
-            setLoadingMore(false);
-        }
-    };
-
-    /**
-     * Load more assets when scrolling
-     */
-    const loadMoreAssets = useCallback(() => {
-        if (!loadingMore && hasMore) {
-            fetchAssets(offset, false);
-        }
-    }, [offset, loadingMore, hasMore, activeTab]);
+    }, [hasMore, loading, pageOffset, loadMoreAssets]);
 
     const handleDelete = async (id: string) => {
         try {
@@ -249,13 +247,15 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                 method: 'DELETE'
             });
             if (response.ok) {
-                setAssets(prev => prev.filter(a => a.id !== id));
                 // Update counts
                 if (activeTab === 'images') {
                     setImageTotalCount(prev => prev - 1);
                 } else {
                     setVideoTotalCount(prev => prev - 1);
                 }
+                // 失效所有资产列表缓存并后台刷新当前页，确保删除立即生效
+                invalidateCache('assets:');
+                refetch();
             }
         } catch (error) {
             console.error('Failed to delete asset:', error);
@@ -273,11 +273,11 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                 body: JSON.stringify(mode === 'old' ? { olderThanDays: 3 } : {}),
             });
             if (response.ok) {
-                // 重新拉取当前页与计数
-                setAssets([]);
-                setOffset(0);
-                setHasMore(true);
-                await fetchAssets(0, true);
+                // 失效列表缓存，回到第一页并后台刷新当前页与计数
+                invalidateCache('assets:');
+                setLoadedOffsets([0]);
+                setPageOffset(0);
+                refetch();
                 await fetchCounts();
             }
         } catch (error) {
