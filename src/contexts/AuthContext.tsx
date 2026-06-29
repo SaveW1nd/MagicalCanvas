@@ -13,6 +13,7 @@ export interface AuthUser {
     username: string;
     role: 'admin' | 'user';
     status: string;
+    balance?: number; // 积分余额（百分单位整数，显示时 ÷100）
 }
 
 interface AuthContextValue {
@@ -21,6 +22,7 @@ interface AuthContextValue {
     loading: boolean;
     login: (username: string, password: string) => Promise<void>;
     logout: () => Promise<void>;
+    refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -82,8 +84,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
     }, []);
 
+    // 重新拉取当前用户（用于生成后刷新积分余额等）
+    const refreshUser = useCallback(async () => {
+        try {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) { const data = await res.json().catch(() => ({})); if (data.user) setUser(data.user); }
+        } catch { /* best effort */ }
+    }, []);
+
     return (
-        <AuthContext.Provider value={{ user, isAdmin: user?.role === 'admin', loading, login, logout }}>
+        <AuthContext.Provider value={{ user, isAdmin: user?.role === 'admin', loading, login, logout, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );
