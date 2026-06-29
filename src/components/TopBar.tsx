@@ -185,6 +185,14 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {/* 用户 / 退出登录 */}
                     {user && (
                         <div className="flex items-center gap-1.5 pl-1">
+                            {user.role !== 'admin' && typeof user.balance === 'number' && (
+                                <span
+                                    title="积分余额"
+                                    className={`hidden sm:inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${canvasTheme === 'dark' ? 'bg-neutral-900 border-neutral-700 text-amber-300' : 'bg-white border-neutral-200 text-amber-600 shadow-sm'}`}
+                                >
+                                    积分 {(user.balance / 100).toFixed(2)}
+                                </span>
+                            )}
                             <button
                                 onClick={() => setShowChangePw(true)}
                                 className={`hidden sm:inline text-xs max-w-[120px] truncate cursor-pointer transition-colors ${canvasTheme === 'dark' ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-neutral-900'}`}

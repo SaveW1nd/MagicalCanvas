@@ -10,6 +10,8 @@ import { generateImage, generateVideo } from '../services/generationService';
 import { generateLocalImage } from '../services/localModelService';
 import { extractVideoLastFrame } from '../utils/videoHelpers';
 import { invalidateCache } from '../utils/swrCache';
+import { showToast } from '../components/Toast';
+import { useAuth } from '../contexts/AuthContext';
 
 interface UseGenerationProps {
     nodes: NodeData[];
@@ -17,6 +19,7 @@ interface UseGenerationProps {
 }
 
 export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
+    const { refreshUser } = useAuth();
     // ============================================================================
     // HELPERS
     // ============================================================================
@@ -393,7 +396,15 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
 
 
             }
+            // 生成成功 → 刷新顶栏积分余额（成功才扣费）
+            void refreshUser();
         } catch (error: any) {
+            // 积分不足：提示并退出 loading，不当作可重试的生成失败
+            if (error?.code === 'INSUFFICIENT_CREDITS') {
+                showToast(error.message || '积分不足，请联系管理员', 'error');
+                updateNode(id, { status: NodeStatus.ERROR, errorMessage: error.message || '积分不足，请联系管理员' });
+                return;
+            }
             // Handle errors
             const msg = error.toString().toLowerCase();
             let errorMessage = error.message || 'Generation failed';

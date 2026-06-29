@@ -5,22 +5,26 @@
  * Admins land here after login (see src/index.tsx Gate).
  */
 import React, { useState } from 'react';
-import { Users, SlidersHorizontal, History, LogOut, KeyRound, Image as ImageIcon } from 'lucide-react';
+import { Users, SlidersHorizontal, History, LogOut, KeyRound, Image as ImageIcon, Coins, Receipt } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserManagement } from './UserManagement';
 import { ModelConfig } from './ModelConfig';
 import { HistoryBrowser } from './HistoryBrowser';
 import { AssetAdmin } from './AssetAdmin';
+import { BillingSettings } from './BillingSettings';
+import { CreditLedger } from './CreditLedger';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal';
 import { ToastHost } from '../Toast';
 
-type Tab = 'users' | 'models' | 'history' | 'assets';
+type Tab = 'users' | 'models' | 'history' | 'assets' | 'billing' | 'ledger';
 
 const NAV: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: 'models', label: '模型配置', icon: <SlidersHorizontal size={18} /> },
     { key: 'users', label: '用户管理', icon: <Users size={18} /> },
     { key: 'history', label: '全部历史', icon: <History size={18} /> },
     { key: 'assets', label: '素材库', icon: <ImageIcon size={18} /> },
+    { key: 'billing', label: '积分设置', icon: <Coins size={18} /> },
+    { key: 'ledger', label: '积分流水', icon: <Receipt size={18} /> },
 ];
 
 export const AdminConsole: React.FC = () => {
@@ -65,6 +69,8 @@ export const AdminConsole: React.FC = () => {
                 {tab === 'models' && <ModelConfig />}
                 {tab === 'history' && <HistoryBrowser />}
                 {tab === 'assets' && <AssetAdmin />}
+                {tab === 'billing' && <BillingSettings />}
+                {tab === 'ledger' && <CreditLedger />}
             </main>
 
             <ChangePasswordModal isOpen={showChangePw} onClose={() => setShowChangePw(false)} />

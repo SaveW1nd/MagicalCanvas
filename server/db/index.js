@@ -49,6 +49,29 @@ db.exec(`
     );
 `);
 
+// --- 积分系统：users.balance 迁移 + 流水表（单位=百分单位整数，1 积分 = 100）---
+const _userCols = db.prepare(`PRAGMA table_info(users)`).all();
+if (!_userCols.some(c => c.name === 'balance')) {
+    db.exec(`ALTER TABLE users ADD COLUMN balance INTEGER NOT NULL DEFAULT 0`);
+}
+db.exec(`
+    CREATE TABLE IF NOT EXISTS credit_ledger (
+        id           TEXT PRIMARY KEY,
+        userId       TEXT NOT NULL,
+        delta        INTEGER NOT NULL,
+        balanceAfter INTEGER NOT NULL,
+        type         TEXT NOT NULL,
+        category     TEXT,
+        modelId      TEXT,
+        params       TEXT,
+        refId        TEXT,
+        note         TEXT,
+        operatorId   TEXT,
+        createdAt    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(userId, createdAt);
+`);
+
 // ---------------------------------------------------------------------------
 // meta key/value
 // ---------------------------------------------------------------------------
@@ -135,6 +158,44 @@ const _deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
 const _countActiveAdmins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'");
 export function deleteUser(id) { _deleteUser.run(id); }
 export function countActiveAdmins() { return _countActiveAdmins.get().n; }
+
+// ---------------------------------------------------------------------------
+// 积分余额（units = 百分单位整数）+ 流水
+// ---------------------------------------------------------------------------
+const _getBalance = db.prepare('SELECT balance FROM users WHERE id = ?');
+export function getUserBalanceUnits(id) { const r = _getBalance.get(id); return r ? r.balance : 0; }
+
+const _addBalance = db.prepare('UPDATE users SET balance = balance + ?, updatedAt = ? WHERE id = ?');
+const _setBalance = db.prepare('UPDATE users SET balance = ?, updatedAt = ? WHERE id = ?');
+/** 增量改余额（正=加，负=扣），返回改后余额。 */
+export function addUserBalanceUnits(id, deltaUnits) {
+    _addBalance.run(deltaUnits, new Date().toISOString(), id);
+    return getUserBalanceUnits(id);
+}
+export function setUserBalanceUnits(id, units) {
+    _setBalance.run(units, new Date().toISOString(), id);
+    return units;
+}
+
+const _insLedger = db.prepare(`
+    INSERT INTO credit_ledger(id, userId, delta, balanceAfter, type, category, modelId, params, refId, note, operatorId, createdAt)
+    VALUES(@id, @userId, @delta, @balanceAfter, @type, @category, @modelId, @params, @refId, @note, @operatorId, @createdAt)
+`);
+export function insertLedger(row) {
+    _insLedger.run({
+        id: crypto.randomUUID(),
+        category: null, modelId: null, params: null, refId: null, note: null, operatorId: null,
+        ...row,
+        createdAt: new Date().toISOString(),
+    });
+}
+export function listLedger({ userId, type, limit = 50, offset = 0 } = {}) {
+    const where = [], args = [];
+    if (userId) { where.push('userId = ?'); args.push(userId); }
+    if (type) { where.push('type = ?'); args.push(type); }
+    const sql = `SELECT * FROM credit_ledger ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+    return db.prepare(sql).all(...args, limit, offset);
+}
 
 // ---------------------------------------------------------------------------
 // token denylist (logout)

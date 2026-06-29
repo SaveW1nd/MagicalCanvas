@@ -10,8 +10,9 @@ import path from 'path';
 import crypto from 'crypto';
 import {
     listUsers, getUserById, getUserByUsername, createUser, updateUser, deleteUser,
-    countActiveAdmins, publicUser,
+    countActiveAdmins, publicUser, listLedger,
 } from '../db/index.js';
+import { grant, isBillingEnabled, getDefaultPrices, setBillingConfig } from '../services/billing.js';
 
 const DEFAULT_PASSWORD = '12345678';
 import { hashPassword } from '../auth/passwords.js';
@@ -506,6 +507,36 @@ router.delete('/public-workflows/:id', (req, res) => {
         console.error('admin delete public-workflow error:', e);
         res.status(500).json({ error: e.message });
     }
+});
+
+// --- 积分：发放/调整、流水、计费配置 ---
+router.post('/users/:id/credits', (req, res) => {
+    const u = getUserById(req.params.id);
+    if (!u) return res.status(404).json({ error: '用户不存在' });
+    const { amount, mode = 'grant', note } = req.body || {};
+    if (typeof amount !== 'number' || amount < 0) return res.status(400).json({ error: 'amount 非法' });
+    if (!['grant', 'deduct', 'set'].includes(mode)) return res.status(400).json({ error: 'mode 非法' });
+    const { balanceAfter } = grant(req.params.id, amount, req.user.id, note, mode);
+    res.json({ success: true, balance: balanceAfter / 100 });
+});
+
+router.get('/ledger', (req, res) => {
+    const { userId, type } = req.query;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const rows = listLedger({ userId, type, limit, offset })
+        .map(r => ({ ...r, amount: r.delta / 100, balanceAfter: r.balanceAfter / 100 }));
+    res.json(rows);
+});
+
+router.get('/billing-config', (_req, res) => {
+    res.json({ enabled: isBillingEnabled(), defaultPrice: getDefaultPrices() });
+});
+
+router.post('/billing-config', (req, res) => {
+    const { enabled, defaultPrice } = req.body || {};
+    setBillingConfig({ enabled, defaultPrice });
+    res.json({ success: true, enabled: isBillingEnabled(), defaultPrice: getDefaultPrices() });
 });
 
 export default router;

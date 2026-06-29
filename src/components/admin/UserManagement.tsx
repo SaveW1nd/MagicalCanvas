@@ -2,7 +2,7 @@
  * UserManagement.tsx — admin user CRUD with confirm dialogs, toasts, custom modals.
  */
 import React, { useState } from 'react';
-import { Loader2, UserPlus, Trash2, KeyRound, ShieldCheck, ShieldOff, Ban, CheckCircle2 } from 'lucide-react';
+import { Loader2, UserPlus, Trash2, KeyRound, ShieldCheck, ShieldOff, Ban, CheckCircle2, Coins } from 'lucide-react';
 import { showToast } from '../Toast';
 import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Tip } from '../ui/Tip';
@@ -17,6 +17,7 @@ interface AdminUser {
     status: 'active' | 'disabled';
     createdAt: string;
     lastLoginAt?: string | null;
+    balance?: number; // 百分单位整数（显示时 ÷100）
 }
 
 async function adminFetch(url: string, init?: RequestInit) {
@@ -46,6 +47,30 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
     const [confirmState, setConfirmState] = useState<PendingConfirm | null>(null);
     const [confirmLoading, setConfirmLoading] = useState(false);
     const [resetUser, setResetUser] = useState<AdminUser | null>(null);
+    // 发放/调整积分弹框
+    const [creditUser, setCreditUser] = useState<AdminUser | null>(null);
+    const [creditAmount, setCreditAmount] = useState('');
+    const [creditMode, setCreditMode] = useState<'grant' | 'deduct' | 'set'>('grant');
+    const [creditNote, setCreditNote] = useState('');
+    const [creditBusy, setCreditBusy] = useState(false);
+
+    const openCredit = (u: AdminUser) => { setCreditUser(u); setCreditAmount(''); setCreditMode('grant'); setCreditNote(''); };
+    const submitCredit = async () => {
+        if (!creditUser) return;
+        const amount = Number(creditAmount);
+        if (!(amount >= 0)) { showToast('请输入有效金额', 'error'); return; }
+        setCreditBusy(true);
+        try {
+            await adminFetch(`/api/admin/users/${creditUser.id}/credits`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount, mode: creditMode, note: creditNote || undefined }),
+            });
+            showToast('已更新积分', 'success');
+            setCreditUser(null);
+            reload();
+        } catch (e) { showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
+        finally { setCreditBusy(false); }
+    };
 
     const reload = () => { invalidateCache('admin:users'); refetchUsers(); };
 
@@ -153,6 +178,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                                 <th className="text-left font-medium px-4 py-2.5">用户</th>
                                 <th className="text-left font-medium px-4 py-2.5">角色</th>
                                 <th className="text-left font-medium px-4 py-2.5">状态</th>
+                                <th className="text-right font-medium px-4 py-2.5">积分</th>
                                 <th className="text-left font-medium px-4 py-2.5">最近登录</th>
                                 <th className="text-right font-medium px-4 py-2.5">操作</th>
                             </tr>
@@ -163,6 +189,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                                     <td className="px-4 py-2.5 font-medium">{u.username}{u.id === currentUserId && <span className="ml-1 text-[10px] text-blue-400">(我)</span>}</td>
                                     <td className="px-4 py-2.5"><span className={u.role === 'admin' ? 'text-amber-400' : 'text-neutral-400'}>{u.role === 'admin' ? '管理员' : '普通用户'}</span></td>
                                     <td className="px-4 py-2.5"><span className={u.status === 'active' ? 'text-green-400' : 'text-red-400'}>{u.status === 'active' ? '正常' : '已禁用'}</span></td>
+                                    <td className="px-4 py-2.5 text-right font-mono text-neutral-200">{((u.balance ?? 0) / 100).toFixed(2)}</td>
                                     <td className="px-4 py-2.5 text-[11px] text-neutral-500">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}</td>
                                     <td className="px-4 py-2.5">
                                         <div className="flex items-center justify-end gap-1.5">
@@ -175,6 +202,9 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                                                 <button onClick={() => askToggleStatus(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white">
                                                     {u.status === 'active' ? <Ban size={15} /> : <CheckCircle2 size={15} />}
                                                 </button>
+                                            </Tip>
+                                            <Tip label="发放/调整积分">
+                                                <button onClick={() => openCredit(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-amber-400"><Coins size={15} /></button>
                                             </Tip>
                                             <Tip label="重置密码">
                                                 <button onClick={() => setResetUser(u)} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white"><KeyRound size={15} /></button>
@@ -208,6 +238,37 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                 onClose={() => setResetUser(null)}
                 onSubmit={doReset}
             />
+
+            {/* 发放/调整积分弹框 */}
+            {creditUser && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[130] p-4" onClick={() => !creditBusy && setCreditUser(null)}>
+                    <div onClick={e => e.stopPropagation()} className="w-full max-w-sm bg-[#1a1a1a] border border-neutral-700 rounded-2xl shadow-2xl p-6 flex flex-col gap-3.5">
+                        <h3 className="text-base font-semibold text-white">积分 · {creditUser.username}</h3>
+                        <p className="text-xs text-neutral-400">当前余额：<span className="font-mono text-neutral-200">{((creditUser.balance ?? 0) / 100).toFixed(2)}</span></p>
+                        <div>
+                            <label className="block text-xs text-neutral-400 mb-1">操作</label>
+                            <Select value={creditMode} onChange={v => setCreditMode(v as 'grant' | 'deduct' | 'set')}
+                                options={[{ value: 'grant', label: '增加' }, { value: 'deduct', label: '扣减' }, { value: 'set', label: '设为' }]} />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-neutral-400 mb-1">金额（积分，支持小数）</label>
+                            <input type="number" step="0.01" min="0" value={creditAmount} onChange={e => setCreditAmount(e.target.value)} placeholder="如 100"
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-neutral-400 mb-1">备注（可选）</label>
+                            <input value={creditNote} onChange={e => setCreditNote(e.target.value)} placeholder="发放原因"
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="flex justify-end gap-2 mt-1">
+                            <button onClick={() => setCreditUser(null)} disabled={creditBusy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50">取消</button>
+                            <button onClick={submitCredit} disabled={creditBusy} className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 disabled:opacity-50">
+                                {creditBusy && <Loader2 size={14} className="animate-spin" />}确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
