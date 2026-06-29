@@ -9,6 +9,7 @@
 
 import express from 'express';
 import { listModelsByCategory, getProvider, CATEGORIES } from '../db/registry.js';
+import { isBillingEnabled } from '../services/billing.js';
 
 const router = express.Router();
 
@@ -20,6 +21,7 @@ function publicModel(m) {
         category: m.category,
         isDefault: m.isDefault,
         providerKind: prov ? prov.kind : null,
+        pricing: m.pricing || {}, // 各档位积分价（前端下拉框按当前分辨率/时长显示）
         ...m.capabilities,        // recommended / resolutions / aspectRatios / durations / supports*
     };
 }
@@ -36,7 +38,7 @@ router.get('/', (req, res) => {
             const def = enabled.find(m => m.isDefault) || enabled[0];
             if (def) defaults[cat] = def.id;
         }
-        res.json({ success: true, models, defaults });
+        res.json({ success: true, models, defaults, billingEnabled: isBillingEnabled() });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }

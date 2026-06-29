@@ -21,16 +21,18 @@ export interface CanvasModel {
     durations?: number[];
     resolutions?: string[];
     aspectRatios?: string[];
+    pricing?: Record<string, any>; // 各档位积分价
 }
 
 interface Registry {
     image: CanvasModel[];
     video: CanvasModel[];
     defaults: Record<string, string>;
+    billingEnabled: boolean;
     loaded: boolean;
 }
 
-const EMPTY: Registry = { image: [], video: [], defaults: {}, loaded: false };
+const EMPTY: Registry = { image: [], video: [], defaults: {}, billingEnabled: false, loaded: false };
 
 let cache: Registry | null = null;
 let inflight: Promise<Registry> | null = null;
@@ -51,6 +53,7 @@ function mapModel(m: Record<string, unknown>): CanvasModel {
         durations: Array.isArray(m.durations) ? (m.durations as number[]) : undefined,
         resolutions: Array.isArray(m.resolutions) ? (m.resolutions as string[]) : undefined,
         aspectRatios: Array.isArray(m.aspectRatios) ? (m.aspectRatios as string[]) : undefined,
+        pricing: (m.pricing && typeof m.pricing === 'object') ? (m.pricing as Record<string, any>) : undefined,
     };
 }
 
@@ -65,6 +68,7 @@ async function fetchRegistry(): Promise<Registry> {
                 image: (data?.models?.image || []).map(mapModel),
                 video: (data?.models?.video || []).map(mapModel),
                 defaults: data?.defaults || {},
+                billingEnabled: !!data?.billingEnabled,
                 loaded: true,
             };
             cache = reg;
@@ -99,4 +103,27 @@ export function useModelRegistry(): Registry {
         return () => { active = false; listeners.delete(l); };
     }, []);
     return reg;
+}
+
+/**
+ * 按当前档位算某模型一次生成扣多少积分。无配置 → null（免费/不显示）。
+ * 图片看分辨率、视频看时长；都没命中时回退模型单价 base。
+ */
+export function modelTierPriceCredits(
+    model: { pricing?: Record<string, any> } | undefined,
+    category: 'image' | 'video',
+    params: { resolution?: string; duration?: number },
+): number | null {
+    const p = model?.pricing;
+    if (!p) return null;
+    if (category === 'image' && params.resolution && p.byResolution) {
+        const v = p.byResolution[String(params.resolution).toLowerCase()];
+        if (typeof v === 'number') return v;
+    }
+    if (category === 'video' && params.duration != null && p.byDuration) {
+        const v = p.byDuration[`${parseInt(String(params.duration), 10)}s`];
+        if (typeof v === 'number') return v;
+    }
+    if (typeof p.base === 'number') return p.base;
+    return null;
 }

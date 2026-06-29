@@ -15,7 +15,7 @@ import { ChangeAnglePanel } from './ChangeAnglePanel';
 import { LocalModel, getLocalModels } from '../../services/localModelService';
 import { showToast } from '../Toast';
 import { optimizePromptRequest, describeImageRequest } from '../../utils/aiPrompt';
-import { useModelRegistry } from '../../hooks/useModelRegistry';
+import { useModelRegistry, modelTierPriceCredits } from '../../hooks/useModelRegistry';
 
 interface NodeControlsProps {
     data: NodeData;
@@ -864,11 +864,19 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                         <span className="flex items-center gap-2">
                                                             <Film size={12} className="text-cyan-400" />
                                                             {model.name}
-                                                            {model.recommended && (
+                                            {model.recommended && (
                                                                 <span className="text-[9px] px-1 py-0.5 bg-green-600/30 text-green-400 rounded">推荐</span>
                                                             )}
                                                         </span>
-                                                        {currentVideoModel.id === model.id && <Check size={12} />}
+                                                        <span className="flex items-center gap-2">
+                                                            {(() => {
+                                                                const c = registry.billingEnabled ? modelTierPriceCredits(model as any, 'video', { duration: currentDuration }) : null;
+                                                                return c != null && c > 0
+                                                                    ? <span className="flex items-center gap-0.5 text-amber-300" title="本次生成消耗积分"><Sparkles size={10} />{c}</span>
+                                                                    : null;
+                                                            })()}
+                                                            {currentVideoModel.id === model.id && <Check size={12} />}
+                                                        </span>
                                                     </button>
                                                 ))}
                                             </>
@@ -1001,11 +1009,19 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                         <span className="flex items-center gap-2">
                                                             <Banana size={12} className="text-yellow-400" />
                                                             {model.name}
-                                                            {model.recommended && (
+                                            {model.recommended && (
                                                                 <span className="text-[9px] px-1 py-0.5 bg-green-600/30 text-green-400 rounded">推荐</span>
                                                             )}
                                                         </span>
-                                                        {currentImageModel.id === model.id && <Check size={12} />}
+                                                        <span className="flex items-center gap-2">
+                                                            {(() => {
+                                                                const c = registry.billingEnabled ? modelTierPriceCredits(model as any, 'image', { resolution: data.resolution }) : null;
+                                                                return c != null && c > 0
+                                                                    ? <span className="flex items-center gap-0.5 text-amber-300" title="本次生成消耗积分"><Sparkles size={10} />{c}</span>
+                                                                    : null;
+                                                            })()}
+                                                            {currentImageModel.id === model.id && <Check size={12} />}
+                                                        </span>
                                                     </button>
                                                 ))}
                                             </>
