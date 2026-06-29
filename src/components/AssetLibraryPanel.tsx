@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Trash2, Upload, Loader2, Plus, Check, FolderInput, Globe, Lock, FolderPlus } from 'lucide-react';
 import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 import { showToast } from './Toast';
 import { Tip } from './ui/Tip';
 import { ExpandedMediaModal } from './modals/ExpandedMediaModal';
+import { useSWR, invalidateCache } from '../utils/swrCache';
 
 interface LibraryAsset {
     id: string;
@@ -45,54 +46,29 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     canvasTheme = 'dark'
 }) => {
     const [selectedCategory, setSelectedCategory] = useState('All');
-    const [assets, setAssets] = useState<LibraryAsset[]>([]);
-    const [publicAssets, setPublicAssets] = useState<LibraryAsset[]>([]);
     const [activeTab, setActiveTab] = useState<'my' | 'public'>('my');
-    const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
-    const [loading, setLoading] = useState(false);
 
-    useEffect(() => {
-        if (isOpen) {
-            fetchLibrary();
-            fetchCategories();
-            fetchPublic();
-        }
-    }, [isOpen]);
+    // SWR 缓存:打开素材库时命中上次数据立即显示,后台 revalidate;
+    // key 为 null(面板未打开)时不请求,保持原"打开才拉"的行为。
+    const { data: libraryData, loading, refetch: refetchLib } = useSWR<LibraryAsset[]>(
+        isOpen ? 'library:mine' : null,
+        () => fetch('/api/library').then(r => r.json())
+    );
+    const { data: categoriesData, refetch: refetchCats } = useSWR<{ categories?: string[] }>(
+        isOpen ? 'library:categories' : null,
+        () => fetch('/api/library/categories').then(r => r.json())
+    );
+    const { data: publicData, refetch: refetchPublic } = useSWR<LibraryAsset[]>(
+        isOpen ? 'library:public' : null,
+        () => fetch('/api/library/public').then(r => r.json())
+    );
 
-    const fetchPublic = async () => {
-        try {
-            const res = await fetch('/api/library/public');
-            if (res.ok) setPublicAssets(await res.json());
-        } catch (error) {
-            console.error('Failed to load public library:', error);
-        }
-    };
-
-    const fetchLibrary = async () => {
-        setLoading(true);
-        try {
-            const res = await fetch('/api/library'); // Adjust port if needed, relative path preferred in helper
-            if (res.ok) {
-                setAssets(await res.json());
-            }
-        } catch (error) {
-            console.error("Failed to load library:", error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchCategories = async () => {
-        try {
-            const res = await fetch('/api/library/categories');
-            if (res.ok) {
-                const data = await res.json();
-                if (Array.isArray(data.categories)) setCategories(data.categories);
-            }
-        } catch (error) {
-            console.error('Failed to load categories:', error);
-        }
-    };
+    // 渲染用:保留原有数据形状与空态兜底
+    const assets: LibraryAsset[] = Array.isArray(libraryData) ? libraryData : [];
+    const publicAssets: LibraryAsset[] = Array.isArray(publicData) ? publicData : [];
+    const categories: string[] = Array.isArray(categoriesData?.categories) && categoriesData!.categories!.length
+        ? categoriesData!.categories!
+        : DEFAULT_CATEGORIES;
 
     const handleAddCategory = async (name: string) => {
         const res = await fetch('/api/library/categories', {
@@ -105,7 +81,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             showAppAlert(data.error || '添加分类失败');
             return;
         }
-        setCategories(data.categories);
+        invalidateCache('library:categories');
+        await refetchCats();
         setSelectedCategory(name);
     };
 
@@ -116,9 +93,10 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             showAppAlert(data.error || '删除分类失败');
             return;
         }
-        setCategories(data.categories);
+        invalidateCache('library:categories');
+        await refetchCats();
         if (selectedCategory === name) setSelectedCategory('All');
-        await fetchLibrary(); // 该分类下素材已自动改挂到剩余分类
+        await refetchLib(); // 该分类下素材已自动改挂到剩余分类
     };
 
     // 导入本地视频/图片到素材库（归入当前分类，「All」时归入 Others）
@@ -158,7 +136,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         setImporting(false);
         if (importInputRef.current) importInputRef.current.value = '';
         if (failed > 0) showAppAlert(`${failed} 个文件导入失败`);
-        await fetchLibrary();
+        invalidateCache('library');
+        await refetchLib();
     };
 
     const handleDeleteAsset = async (id: string, e: React.MouseEvent) => {
@@ -170,7 +149,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 method: 'DELETE'
             });
             if (res.ok) {
-                setAssets(prev => prev.filter(a => a.id !== id));
+                invalidateCache('library');
+                await refetchLib();
             } else {
                 console.error("Failed to delete asset");
             }
@@ -191,7 +171,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             }
         }
         if (failed > 0) showAppAlert(`${failed} 个素材删除失败`);
-        await fetchLibrary();
+        invalidateCache('library');
+        await refetchLib();
     };
 
     // 改某素材分类后，本地更新该行 category
@@ -203,7 +184,8 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 body: JSON.stringify({ category }),
             });
             if (!res.ok) { showAppAlert('改分类失败'); return; }
-            setAssets(prev => prev.map(a => a.id === id ? { ...a, category } : a));
+            invalidateCache('library');
+            await refetchLib();
         } catch (_) {
             showAppAlert('改分类失败');
         }
@@ -215,8 +197,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             const res = await fetch(`/api/library/${id}/publish`, { method: 'POST' });
             const data = await res.json();
             if (!res.ok) { showAppAlert(data.error || '发布失败'); return; }
-            setAssets(prev => prev.map(a => a.id === id ? { ...a, visibility: 'public' } : a));
-            await fetchPublic();
+            invalidateCache('library');
+            await refetchLib();
+            await refetchPublic();
             showToast('已发布到公共库', 'success');
         } catch (_) { showAppAlert('发布失败'); }
     };
@@ -227,7 +210,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             const res = await fetch(`/api/library/from-public/${publicId}`, { method: 'POST' });
             const data = await res.json();
             if (!res.ok) { showAppAlert(data.error || '收藏失败'); return; }
-            await fetchLibrary();
+            invalidateCache('library');
+            await refetchLib();
+            await refetchPublic();
             showToast(data.already ? '已在你的素材库中' : '已加入我的素材库', 'success');
         } catch (_) { showAppAlert('收藏失败'); }
     };
