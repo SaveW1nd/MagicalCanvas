@@ -15,6 +15,7 @@ import { resolveImageToBase64, saveBufferToFile, userMediaDir } from '../utils/i
 import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
 import { generateFlow2apiImage, generateFlow2apiVideo, isFlow2apiImageModel, isFlow2apiVideoModel } from '../services/flow2api.js';
 import { resolveModel } from '../db/registry.js';
+import { isExempt, quote, charge } from '../services/billing.js';
 
 const router = express.Router();
 
@@ -55,6 +56,12 @@ router.post('/generate-image', async (req, res) => {
         // 这里只需判断「是不是 flow2api 模型」选合适的客户端即可。
         const effectiveImageModel = imageModel || IMAGE_MODEL;
         const isKlingModel = false;
+
+        // 积分预检（管理员/总开关关 → 豁免）
+        if (!isExempt(req.user)) {
+            const q = quote(req.user, 'image', imageModel, { resolution });
+            if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
+        }
 
         let imageBuffer;
         let imageFormat = 'png';
@@ -234,6 +241,11 @@ router.post('/generate-image', async (req, res) => {
         fs.writeFileSync(path.join(IMAGES_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
 
         console.log(`Image saved: ${resultUrl} (model: ${imageModel || 'gemini-pro'})`);
+        // 成功后扣费（管理员/总开关关 → 豁免）
+        if (!isExempt(req.user)) {
+            try { charge(req.user, { category: 'image', modelId: imageModel, params: { resolution }, refId: nodeId || saved.id }); }
+            catch (e) { console.error('[billing] charge image failed:', e.message); }
+        }
         return res.json({ resultUrl });
 
     } catch (error) {
@@ -254,6 +266,12 @@ router.post('/generate-video', async (req, res) => {
     try {
         const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, characterReferenceUrls: rawCharacterReferenceUrls, aspectRatio, resolution, duration, videoModel } = req.body;
         const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL, VIDEOS_DIR } = req.app.locals;
+
+        // 积分预检（管理员/总开关关 → 豁免）
+        if (!isExempt(req.user)) {
+            const q = quote(req.user, 'video', videoModel, { duration, tier: videoModel });
+            if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
+        }
 
         // Resolve file URLs to base64
         const imageBase64 = resolveImageToBase64(rawImageBase64);
@@ -454,6 +472,11 @@ router.post('/generate-video', async (req, res) => {
         fs.writeFileSync(path.join(VIDEOS_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
 
         console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
+        // 成功后扣费（管理员/总开关关 → 豁免）
+        if (!isExempt(req.user)) {
+            try { charge(req.user, { category: 'video', modelId: videoModel, params: { duration, tier: videoModel }, refId: nodeId || saved.id }); }
+            catch (e) { console.error('[billing] charge video failed:', e.message); }
+        }
         return res.json({ resultUrl });
 
     } catch (error) {
