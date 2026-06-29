@@ -49,6 +49,11 @@ export const generateImage = async (params: GenerateImageParams): Promise<string
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
+      if (response.status === 402) {
+        const err = new Error(errData.error || '积分不足') as Error & { code?: string };
+        err.code = 'INSUFFICIENT_CREDITS';
+        throw err;
+      }
       throw new Error(errData.error || response.statusText);
     }
 
@@ -77,6 +82,11 @@ export const generateVideo = async (params: GenerateVideoParams): Promise<string
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
+      if (response.status === 402) {
+        const err = new Error(errData.error || '积分不足') as Error & { code?: string };
+        err.code = 'INSUFFICIENT_CREDITS';
+        throw err;
+      }
       throw new Error(errData.error || response.statusText);
     }
 
