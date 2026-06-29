@@ -1,10 +1,10 @@
 /**
- * PricingTable.tsx — 管理员：所有模型 × 所有档位 的统一定价页。
+ * PricingTable.tsx — 管理员：所有模型 × 所有档位 的统一定价页（含计费总开关）。
  * 直接填绝对积分（支持小数）：图片按分辨率、视频按时长、文字/视觉单价。
- * 留空=该档不单独定价（回退模型单价 / 类别兜底价）。
+ * 留空 = 该档不收费（免费）。输入失焦即自动保存，无需保存按钮。
  */
 import React, { useState } from 'react';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Check } from 'lucide-react';
 import { showToast } from '../Toast';
 import { useSWR, invalidateCache } from '../../utils/swrCache';
 import type { RegistryModel } from './ModelModal';
@@ -16,19 +16,26 @@ async function api(url: string, init?: RequestInit) {
     return data;
 }
 
-const CAT_LABEL: Record<string, string> = { image: '图片', video: '视频', vision: '看图(视觉)', text: '文字' };
+const CAT_LABEL: Record<string, string> = { image: '图片', video: '视频', vision: '看图（视觉）', text: '文字' };
 const CAT_ORDER = ['image', 'video', 'vision', 'text'];
 
-const inputCls = 'w-20 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm text-white text-right outline-none focus:border-blue-500';
+// 去掉数字框上下箭头 + 干净外观
+const numCls = 'w-[68px] bg-neutral-900/80 border border-neutral-700/80 rounded-lg pl-2.5 pr-1 py-1.5 text-sm text-white text-right outline-none transition-colors focus:border-blue-500 hover:border-neutral-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none placeholder:text-neutral-600';
 
 export const PricingTable: React.FC = () => {
     const { data, loading, refetch } = useSWR<{ models: RegistryModel[] }>('admin:models', () => api('/api/admin/models'));
+    const cfg = useSWR<{ enabled: boolean }>('admin:billing-config', () => api('/api/admin/billing-config'));
     const models = data?.models || [];
+
     const [draft, setDraft] = useState<Record<string, any>>({});
-    const [savingId, setSavingId] = useState<string | null>(null);
+    const [status, setStatus] = useState<Record<string, 'saving' | 'saved'>>({});
+    const [enabled, setEnabled] = useState(false);
+    const [togBusy, setTogBusy] = useState(false);
+    React.useEffect(() => { if (cfg.data) setEnabled(!!cfg.data.enabled); }, [cfg.data]);
 
     const pricingOf = (m: RegistryModel): any => draft[m.id] ?? (m.pricing && typeof m.pricing === 'object' ? m.pricing : {});
-    const setTier = (m: RegistryModel, group: 'byResolution' | 'byDuration', key: string, v: string) => {
+
+    const editTier = (m: RegistryModel, group: 'byResolution' | 'byDuration', key: string, v: string) => {
         setDraft(d => {
             const p = { ...pricingOf(m) };
             const g = { ...(p[group] || {}) };
@@ -37,20 +44,36 @@ export const PricingTable: React.FC = () => {
             return { ...d, [m.id]: p };
         });
     };
-    const setBase = (m: RegistryModel, v: string) => {
+    const editBase = (m: RegistryModel, v: string) => {
         setDraft(d => { const p = { ...pricingOf(m) }; if (v === '') delete p.base; else p.base = Number(v); return { ...d, [m.id]: p }; });
     };
 
-    const save = async (m: RegistryModel) => {
-        setSavingId(m.id);
+    // 失焦保存（仅当该模型有未保存改动时）
+    const saveOnBlur = async (m: RegistryModel) => {
+        if (!draft[m.id]) return;
+        setStatus(s => ({ ...s, [m.id]: 'saving' }));
         try {
             await api(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing: pricingOf(m) }) });
             invalidateCache('admin:models');
             await refetch();
-            setDraft(d => { const n = { ...d }; delete n[m.id]; return n; }); // 用服务端最新值
-            showToast('已保存', 'success');
-        } catch (e) { showToast(e instanceof Error ? e.message : '保存失败', 'error'); }
-        finally { setSavingId(null); }
+            setDraft(d => { const n = { ...d }; delete n[m.id]; return n; });
+            setStatus(s => ({ ...s, [m.id]: 'saved' }));
+            setTimeout(() => setStatus(s => { const n = { ...s }; delete n[m.id]; return n; }), 1500);
+        } catch (e) {
+            setStatus(s => { const n = { ...s }; delete n[m.id]; return n; });
+            showToast(e instanceof Error ? e.message : '保存失败', 'error');
+        }
+    };
+
+    const toggleBilling = async () => {
+        const next = !enabled;
+        setEnabled(next); setTogBusy(true);
+        try {
+            await api('/api/admin/billing-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: next }) });
+            invalidateCache('admin:billing-config'); cfg.refetch();
+            showToast(next ? '已开启计费' : '已关闭计费', 'success');
+        } catch (e) { setEnabled(!next); showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
+        finally { setTogBusy(false); }
     };
 
     const resolutionsOf = (m: RegistryModel): string[] => {
@@ -62,70 +85,80 @@ export const PricingTable: React.FC = () => {
         return Array.isArray(d) && d.length ? d : [5, 10];
     };
 
+    const TierField: React.FC<{ label: string; value: any; onChange: (v: string) => void; onBlur: () => void }> = ({ label, value, onChange, onBlur }) => (
+        <div className="flex flex-col items-center gap-1">
+            <span className="text-[11px] text-neutral-500">{label}</span>
+            <input type="number" step="0.01" min="0" placeholder="免费" value={value ?? ''}
+                onChange={e => onChange(e.target.value)} onBlur={onBlur} className={numCls} />
+        </div>
+    );
+
     return (
-        <div className="flex flex-col gap-5">
-            <div>
-                <h2 className="text-base font-semibold text-white mb-1">模型价格</h2>
-                <p className="text-xs text-neutral-500">
-                    直接填每次生成扣多少积分（支持小数）。图片按分辨率、视频按时长、文字/视觉单价；留空=该档回退模型单价/类别兜底价。
-                    {loading && !data && <span className="ml-2 text-neutral-400">加载中…</span>}
-                </p>
+        <div className="flex flex-col gap-5 max-w-3xl">
+            {/* 顶部：标题 + 计费总开关 */}
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <h2 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+                        模型价格 {loading && !data && <Loader2 size={14} className="animate-spin text-neutral-500" />}
+                    </h2>
+                    <p className="text-xs text-neutral-500 leading-relaxed">
+                        每次生成扣多少积分（支持小数）。<span className="text-neutral-400">留空 = 该档免费</span>。改完点别处自动保存。
+                    </p>
+                </div>
+                <div className="shrink-0 flex items-center gap-2.5 bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5">
+                    <span className="text-xs text-neutral-300 whitespace-nowrap">启用计费</span>
+                    <button onClick={toggleBilling} disabled={togBusy}
+                        className={`relative w-10 h-[22px] rounded-full transition-colors disabled:opacity-60 ${enabled ? 'bg-blue-600' : 'bg-neutral-700'}`}>
+                        <span className={`absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white transition-transform ${enabled ? 'translate-x-[18px]' : ''}`} />
+                    </button>
+                </div>
             </div>
+
+            {!enabled && (
+                <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                    计费当前<span className="font-medium">未开启</span>，不会扣任何用户积分。配好价格后打开右上角开关即可生效（管理员始终不扣）。
+                </div>
+            )}
 
             {CAT_ORDER.map(cat => {
                 const list = models.filter(m => m.category === cat);
                 if (!list.length) return null;
                 return (
-                    <div key={cat}>
-                        <h3 className="text-sm font-medium text-neutral-300 mb-2">{CAT_LABEL[cat] || cat}</h3>
-                        <div className="rounded-xl border border-neutral-800 overflow-hidden divide-y divide-neutral-800">
+                    <section key={cat} className="flex flex-col gap-2">
+                        <h3 className="text-xs font-semibold tracking-wide text-neutral-400 uppercase">{CAT_LABEL[cat] || cat}</h3>
+                        <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 divide-y divide-neutral-800/70">
                             {list.map(m => {
                                 const p = pricingOf(m);
-                                const dirty = !!draft[m.id];
+                                const st = status[m.id];
                                 return (
-                                    <div key={m.id} className="flex items-center gap-4 px-4 py-3 flex-wrap">
-                                        <div className="min-w-[160px]">
-                                            <div className="text-sm text-neutral-200">{m.label}</div>
-                                            <div className="text-[11px] text-neutral-500 font-mono">{m.modelId}</div>
+                                    <div key={m.id} className="flex items-center gap-5 px-4 py-3.5 flex-wrap">
+                                        <div className="min-w-[150px] flex-1">
+                                            <div className="text-sm text-neutral-100 font-medium flex items-center gap-2">
+                                                {m.label}
+                                                {st === 'saving' && <Loader2 size={12} className="animate-spin text-neutral-500" />}
+                                                {st === 'saved' && <Check size={13} className="text-green-400" />}
+                                            </div>
+                                            <div className="text-[11px] text-neutral-600 font-mono">{m.modelId}</div>
                                         </div>
-                                        <div className="flex items-center gap-3 flex-wrap flex-1">
+                                        <div className="flex items-end gap-3 flex-wrap">
                                             {cat === 'image' && resolutionsOf(m).map(r => (
-                                                <label key={r} className="text-xs text-neutral-400 flex items-center gap-1">
-                                                    {r}
-                                                    <input type="number" step="0.01" min="0" placeholder="—"
-                                                        value={p.byResolution?.[r.toLowerCase()] ?? ''}
-                                                        onChange={e => setTier(m, 'byResolution', r.toLowerCase(), e.target.value)}
-                                                        className={inputCls} />
-                                                </label>
+                                                <TierField key={r} label={r} value={p.byResolution?.[r.toLowerCase()]}
+                                                    onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} onBlur={() => saveOnBlur(m)} />
                                             ))}
                                             {cat === 'video' && durationsOf(m).map(n => (
-                                                <label key={n} className="text-xs text-neutral-400 flex items-center gap-1">
-                                                    {n}s
-                                                    <input type="number" step="0.01" min="0" placeholder="—"
-                                                        value={p.byDuration?.[`${n}s`] ?? ''}
-                                                        onChange={e => setTier(m, 'byDuration', `${n}s`, e.target.value)}
-                                                        className={inputCls} />
-                                                </label>
+                                                <TierField key={n} label={`${n}s`} value={p.byDuration?.[`${n}s`]}
+                                                    onChange={v => editTier(m, 'byDuration', `${n}s`, v)} onBlur={() => saveOnBlur(m)} />
                                             ))}
                                             {(cat === 'text' || cat === 'vision') && (
-                                                <label className="text-xs text-neutral-400 flex items-center gap-1">
-                                                    单价
-                                                    <input type="number" step="0.01" min="0" placeholder="—"
-                                                        value={p.base ?? ''}
-                                                        onChange={e => setBase(m, e.target.value)}
-                                                        className={inputCls} />
-                                                </label>
+                                                <TierField label="单价" value={p.base}
+                                                    onChange={v => editBase(m, v)} onBlur={() => saveOnBlur(m)} />
                                             )}
                                         </div>
-                                        <button onClick={() => save(m)} disabled={!dirty || savingId === m.id}
-                                            className={`shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs ${dirty ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-neutral-800 text-neutral-500'} disabled:opacity-50`}>
-                                            {savingId === m.id ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}保存
-                                        </button>
                                     </div>
                                 );
                             })}
                         </div>
-                    </div>
+                    </section>
                 );
             })}
 
