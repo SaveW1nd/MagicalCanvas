@@ -52,6 +52,12 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_provider ON models(providerId);
 `);
 
+// --- 积分系统：models.pricing 迁移（JSON，每模型一份价格配置）---
+const _modelColsMig = db.prepare(`PRAGMA table_info(models)`).all();
+if (!_modelColsMig.some(c => c.name === 'pricing')) {
+    db.exec(`ALTER TABLE models ADD COLUMN pricing TEXT NOT NULL DEFAULT '{}'`);
+}
+
 // ---------------------------------------------------------------------------
 // Row mappers
 // ---------------------------------------------------------------------------
@@ -59,6 +65,8 @@ function rowToModel(r) {
     if (!r) return null;
     let caps = {};
     try { caps = JSON.parse(r.capabilities || '{}'); } catch { caps = {}; }
+    let pricing = {};
+    try { pricing = JSON.parse(r.pricing || '{}'); } catch { pricing = {}; }
     return {
         id: r.id,
         modelId: r.modelId,
@@ -68,6 +76,7 @@ function rowToModel(r) {
         enabled: !!r.enabled,
         isDefault: !!r.isDefault,
         capabilities: caps,
+        pricing,
         sortOrder: r.sortOrder,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
@@ -125,8 +134,8 @@ export function countModelsForProvider(id) { return db.prepare('SELECT COUNT(*) 
 // models repo
 // ---------------------------------------------------------------------------
 const _insModel = db.prepare(`
-    INSERT INTO models(id, modelId, label, category, providerId, enabled, isDefault, capabilities, sortOrder, createdAt, updatedAt)
-    VALUES(@id, @modelId, @label, @category, @providerId, @enabled, @isDefault, @capabilities, @sortOrder, @createdAt, @updatedAt)
+    INSERT INTO models(id, modelId, label, category, providerId, enabled, isDefault, capabilities, pricing, sortOrder, createdAt, updatedAt)
+    VALUES(@id, @modelId, @label, @category, @providerId, @enabled, @isDefault, @capabilities, @pricing, @sortOrder, @createdAt, @updatedAt)
 `);
 const _allModels = db.prepare('SELECT * FROM models ORDER BY category ASC, sortOrder ASC, createdAt ASC');
 const _modelsByCategory = db.prepare('SELECT * FROM models WHERE category = ? ORDER BY sortOrder ASC, createdAt ASC');
@@ -137,7 +146,7 @@ export function listModels() { return _allModels.all().map(rowToModel); }
 export function listModelsByCategory(cat) { return _modelsByCategory.all(cat).map(rowToModel); }
 export function getModel(id) { return rowToModel(_modelById.get(id)); }
 
-export function createModel({ modelId, label, category, providerId, enabled = true, isDefault = false, capabilities = {}, sortOrder = 0 }) {
+export function createModel({ modelId, label, category, providerId, enabled = true, isDefault = false, capabilities = {}, pricing = {}, sortOrder = 0 }) {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
     _insModel.run({
@@ -149,6 +158,7 @@ export function createModel({ modelId, label, category, providerId, enabled = tr
         enabled: enabled ? 1 : 0,
         isDefault: isDefault ? 1 : 0,
         capabilities: JSON.stringify(capabilities || {}),
+        pricing: JSON.stringify(pricing || {}),
         sortOrder: Number(sortOrder) || 0,
         createdAt: now,
         updatedAt: now,
@@ -172,6 +182,10 @@ export function updateModel(id, fields) {
     if ('capabilities' in fields && fields.capabilities !== undefined) {
         sets.push('capabilities = @capabilities');
         vals.capabilities = JSON.stringify(fields.capabilities || {});
+    }
+    if ('pricing' in fields && fields.pricing !== undefined) {
+        sets.push('pricing = @pricing');
+        vals.pricing = JSON.stringify(fields.pricing || {});
     }
     if (!sets.length) return getModel(id);
     const now = new Date().toISOString();
