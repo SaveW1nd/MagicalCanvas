@@ -12,6 +12,8 @@ import { Select } from '../ui/Select';
 import { Tip } from '../ui/Tip';
 import { ExpandedMediaModal } from '../modals/ExpandedMediaModal';
 import { WorkflowPreview } from '../canvas/WorkflowPreview';
+import { RenameModal } from './RenameModal';
+import { Pencil } from 'lucide-react';
 
 interface HistoryItem {
     id: string;
@@ -51,8 +53,8 @@ const MEDIA_BASE = (typeof window !== 'undefined' && window.location.port === '5
     ? `${window.location.protocol}//${window.location.hostname}:3501`
     : '';
 
-async function adminFetch(url: string) {
-    const res = await fetch(url);
+async function adminFetch(url: string, init?: RequestInit) {
+    const res = await fetch(url, init);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
@@ -76,6 +78,7 @@ export const HistoryBrowser: React.FC = () => {
     const [publishingKey, setPublishingKey] = useState<string | null>(null);
     const [previewMedia, setPreviewMedia] = useState<string | null>(null);
     const [previewWorkflowId, setPreviewWorkflowId] = useState<string | null>(null);
+    const [renameItem, setRenameItem] = useState<HistoryItem | null>(null);
 
     // 点卡片预览:图片/视频→放大模态,画布→只读图预览
     const openPreview = (it: HistoryItem) => {
@@ -205,6 +208,13 @@ export const HistoryBrowser: React.FC = () => {
                                         {tm.icon}{tm.label}
                                     </span>
                                     <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                        {/* 重命名 */}
+                                        <Tip label="重命名">
+                                            <button onClick={(e) => { e.stopPropagation(); setRenameItem(it); }}
+                                                className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm transition-colors">
+                                                <Pencil size={12} />
+                                            </button>
+                                        </Tip>
                                         {/* 发布到公共(图片/视频→公共素材库;画布→公共工作流) */}
                                         {(it.type === 'images' || it.type === 'videos' || it.type === 'workflows') && (
                                             published.has(itemKey(it)) ? (
@@ -277,6 +287,14 @@ export const HistoryBrowser: React.FC = () => {
                     onClose={() => setPreviewWorkflowId(null)}
                 />
             )}
+
+            <RenameModal open={!!renameItem} initial={renameItem?.title || ''} label="标题"
+                onClose={() => setRenameItem(null)}
+                onSave={async (title) => {
+                    if (!renameItem) return;
+                    await adminFetch(`/api/admin/history/${renameItem.type}/${renameItem.id}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+                    invalidateCache('admin:history:'); refetchHist();
+                }} />
         </div>
     );
 };

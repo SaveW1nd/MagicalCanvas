@@ -6,7 +6,7 @@
  * 数据来自 GET /api/admin/assets 与 GET /api/admin/public-workflows（requireAdmin）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, RefreshCw, Globe, Trash2, LayoutGrid } from 'lucide-react';
+import { Loader2, Search, RefreshCw, Globe, Trash2, LayoutGrid, Pencil } from 'lucide-react';
 import { showToast } from '../Toast';
 import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Select } from '../ui/Select';
@@ -14,6 +14,7 @@ import { Tip } from '../ui/Tip';
 import { showAppConfirm } from '../ui/AppDialog';
 import { ExpandedMediaModal } from '../modals/ExpandedMediaModal';
 import { WorkflowPreview } from '../canvas/WorkflowPreview';
+import { RenameModal } from './RenameModal';
 
 interface Asset {
     id: string;
@@ -73,6 +74,7 @@ export const AssetAdmin: React.FC = () => {
 
     const [previewMedia, setPreviewMedia] = useState<string | null>(null);
     const [previewWorkflowId, setPreviewWorkflowId] = useState<string | null>(null);
+    const [renameTarget, setRenameTarget] = useState<{ kind: 'asset'; id: string; value: string } | { kind: 'workflow'; id: string; value: string } | null>(null);
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -207,6 +209,12 @@ export const AssetAdmin: React.FC = () => {
                                 </span>
                                 {/* hover 操作 */}
                                 <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                    <Tip label="重命名">
+                                        <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ kind: 'asset', id: a.id, value: a.name }); }}
+                                            className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm">
+                                            <Pencil size={14} />
+                                        </button>
+                                    </Tip>
                                     <Tip label={a.visibility === 'public' ? '下架为私有' : '发布到公共'}>
                                         <button onClick={() => toggleVisibility(a)}
                                             className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm">
@@ -265,6 +273,12 @@ export const AssetAdmin: React.FC = () => {
                                         <div className="text-neutral-700 scale-[1.9]"><LayoutGrid size={13} /></div>
                                     )}
                                     <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                        <Tip label="重命名">
+                                            <button onClick={(e) => { e.stopPropagation(); setRenameTarget({ kind: 'workflow', id: w.id, value: w.title }); }}
+                                                className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-white backdrop-blur-sm">
+                                                <Pencil size={14} />
+                                            </button>
+                                        </Tip>
                                         <Tip label="删除">
                                             <button onClick={() => deleteWorkflow(w)}
                                                 className="p-1 rounded-md bg-black/70 text-neutral-300 hover:text-red-400 backdrop-blur-sm">
@@ -295,6 +309,20 @@ export const AssetAdmin: React.FC = () => {
                     onClose={() => setPreviewWorkflowId(null)}
                 />
             )}
+
+            <RenameModal open={!!renameTarget} initial={renameTarget?.value || ''}
+                label={renameTarget?.kind === 'workflow' ? '标题' : '名称'}
+                onClose={() => setRenameTarget(null)}
+                onSave={async (val) => {
+                    if (!renameTarget) return;
+                    if (renameTarget.kind === 'asset') {
+                        await adminFetch(`/api/admin/assets/${renameTarget.id}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: val }) });
+                        invalidateCache('admin:assets:'); refetchAssets();
+                    } else {
+                        await adminFetch(`/api/admin/public-workflows/${renameTarget.id}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) });
+                        invalidateCache('admin:public-workflows'); refetchPublic();
+                    }
+                }} />
         </div>
     );
 };
