@@ -1,10 +1,12 @@
 /**
  * BillingSettings.tsx — 管理员：积分计费总开关 + 各类别兜底价。
- * 兜底价：模型没单独配 pricing.base 时按类别用此价（积分）。
+ * 兜底价：模型没在「模型价格」里配该档/单价时，按类别用此价（积分）。
+ * 用 SWR：再次进入秒显上次数据、后台刷新；文字/表单结构始终先渲染，不阻塞。
  */
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR, invalidateCache } from '../../utils/swrCache';
 
 async function api(url: string, init?: RequestInit) {
     const res = await fetch(url, init);
@@ -21,21 +23,17 @@ const CATS: { key: string; label: string }[] = [
 ];
 
 export const BillingSettings: React.FC = () => {
-    const [loading, setLoading] = useState(true);
+    const { data, loading, refetch } = useSWR<{ enabled: boolean; defaultPrice: Record<string, number> }>(
+        'admin:billing-config', () => api('/api/admin/billing-config'));
+
     const [saving, setSaving] = useState(false);
     const [enabled, setEnabled] = useState(false);
     const [prices, setPrices] = useState<Record<string, number>>({});
 
+    // 数据到达后同步进可编辑状态（结构在此之前已渲染）
     useEffect(() => {
-        (async () => {
-            try {
-                const d = await api('/api/admin/billing-config');
-                setEnabled(!!d.enabled);
-                setPrices(d.defaultPrice || {});
-            } catch (e) { showToast(e instanceof Error ? e.message : '加载失败', 'error'); }
-            finally { setLoading(false); }
-        })();
-    }, []);
+        if (data) { setEnabled(!!data.enabled); setPrices(data.defaultPrice || {}); }
+    }, [data]);
 
     const save = async () => {
         setSaving(true);
@@ -46,17 +44,19 @@ export const BillingSettings: React.FC = () => {
             });
             setEnabled(!!d.enabled);
             setPrices(d.defaultPrice || {});
+            invalidateCache('admin:billing-config');
+            refetch();
             showToast('已保存', 'success');
         } catch (e) { showToast(e instanceof Error ? e.message : '保存失败', 'error'); }
         finally { setSaving(false); }
     };
 
-    if (loading) return <div className="flex items-center gap-2 text-neutral-500 text-sm py-8"><Loader2 size={16} className="animate-spin" /> 加载中…</div>;
-
     return (
         <div className="max-w-md flex flex-col gap-5">
             <div>
-                <h2 className="text-base font-semibold text-white mb-1">积分设置</h2>
+                <h2 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+                    积分设置 {loading && !data && <Loader2 size={14} className="animate-spin text-neutral-500" />}
+                </h2>
                 <p className="text-xs text-neutral-500">总开关关闭时不扣任何用户积分（管理员始终不扣）。配好价格后再开启。</p>
             </div>
 
@@ -81,7 +81,7 @@ export const BillingSettings: React.FC = () => {
                         </label>
                     ))}
                 </div>
-                <p className="text-[11px] text-neutral-500 mt-2">模型单独配了价格时优先用模型价；没配才用这里的兜底价。</p>
+                <p className="text-[11px] text-neutral-500 mt-2">模型在「模型价格」里配了价就优先用模型价；没配才用这里的兜底价。</p>
             </div>
 
             <div>

@@ -61,7 +61,6 @@ export const ModelModal: React.FC<{
     const [aspectRatios, setAspectRatios] = useState('');
     const [durations, setDurations] = useState('');
     const [caps, setCaps] = useState<Record<string, boolean>>({});
-    const [pricing, setPricing] = useState<Record<string, any>>({});
     const [busy, setBusy] = useState(false);
     const [upstream, setUpstream] = useState<string[]>([]);
     const [fetching, setFetching] = useState(false);
@@ -89,7 +88,6 @@ export const ModelModal: React.FC<{
             supportsThinking: !!c.supportsThinking,
             supportsVision: !!c.supportsVision,
         });
-        setPricing(model?.pricing && typeof model.pricing === 'object' ? model.pricing : {});
         setUpstream([]);
     }, [open, model, presetCategory, providers]);
 
@@ -97,14 +95,6 @@ export const ModelModal: React.FC<{
     const close = () => { if (!busy) onClose(); };
     const flag = (k: string) => caps[k] || false;
     const setFlag = (k: string, v: boolean) => setCaps(p => ({ ...p, [k]: v }));
-    // 价格基础单价 / 参数系数（空串=不设，移除该键）
-    const setBase = (v: string) => setPricing(p => { const n = { ...p }; if (v === '') delete n.base; else n.base = Number(v); return n; });
-    const setCoef = (group: string, key: string, v: string) => setPricing(p => {
-        const g = { ...(p[group] || {}) };
-        if (v === '') delete g[key]; else g[key] = Number(v);
-        const n = { ...p }; if (Object.keys(g).length) n[group] = g; else delete n[group];
-        return n;
-    });
 
     const fetchUpstream = async () => {
         if (!providerId) { showToast('请先选择接入点', 'error'); return; }
@@ -146,7 +136,7 @@ export const ModelModal: React.FC<{
         if (!providerId) { showToast('请选择接入点', 'error'); return; }
         setBusy(true);
         try {
-            const body = { modelId: modelId.trim(), label: label.trim() || modelId.trim(), category, providerId, enabled, isDefault, capabilities: buildCapabilities(), pricing };
+            const body = { modelId: modelId.trim(), label: label.trim() || modelId.trim(), category, providerId, enabled, isDefault, capabilities: buildCapabilities() };
             if (editing) await api(`/api/admin/models/${model!.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             else await api('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             showToast(editing ? '已保存' : '已添加模型', 'success');
@@ -225,34 +215,6 @@ export const ModelModal: React.FC<{
                         <Check label="支持看图" checked={flag('supportsVision')} onChange={v => setFlag('supportsVision', v)} />
                     </CapBox>
                 )}
-
-                {/* 积分价格（最终价 = 基础单价 × 命中参数系数；留空=系数1。仅在「积分设置」开启计费后生效） */}
-                <CapBox title="积分价格（每次扣多少积分，支持小数）">
-                    <Field label="基础单价">
-                        <input type="number" step="0.01" min="0" value={pricing.base ?? ''} onChange={e => setBase(e.target.value)} placeholder="如 2.5" className={inputCls} />
-                    </Field>
-                    {category === 'image' && (
-                        <div className="grid grid-cols-3 gap-2">
-                            {['1k', '2k', '4k'].map(k => (
-                                <Field key={k} label={`${k} 系数`}>
-                                    <input type="number" step="0.1" min="0" value={pricing.byResolution?.[k] ?? ''} onChange={e => setCoef('byResolution', k, e.target.value)} placeholder="1" className={inputCls} />
-                                </Field>
-                            ))}
-                        </div>
-                    )}
-                    {category === 'video' && (
-                        <div className="grid grid-cols-3 gap-2">
-                            {(parseNums(durations) as number[]).length
-                                ? (parseNums(durations) as number[]).map(n => (
-                                    <Field key={n} label={`${n}s 系数`}>
-                                        <input type="number" step="0.1" min="0" value={pricing.byDuration?.[`${n}s`] ?? ''} onChange={e => setCoef('byDuration', `${n}s`, e.target.value)} placeholder="1" className={inputCls} />
-                                    </Field>
-                                ))
-                                : <p className="col-span-3 text-[11px] text-neutral-500">先在上方填「时长」，这里才会出现各时长的系数。</p>}
-                        </div>
-                    )}
-                    <p className="text-[11px] text-neutral-500">最终价 = 基础单价 × 命中参数系数；留空=系数 1。需在「积分设置」开启计费后才扣费。</p>
-                </CapBox>
 
                 <div className="flex justify-end gap-2 mt-1">
                     <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50">取消</button>

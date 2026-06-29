@@ -15,26 +15,28 @@ export function toCredits(units) { return Math.round(Number(units || 0)) / 100; 
 function durationKey(d) { return `${parseInt(d, 10)}s`; }
 
 /**
- * 计算一次生成的价格（返回 units 整数）。
+ * 计算一次生成的价格（返回 units 整数）。直接按档位定价（积分绝对值，非系数）：
+ * - 图片：pricing.byResolution[分辨率] 命中即用该价
+ * - 视频：pricing.byDuration[时长] 命中即用该价
+ * - 否则用模型单价 pricing.base；再否则用类别兜底价 defaults[category]；都没有 = 0。
  * @param model    registry 模型对象（含 category 与 pricing）
  * @param category 'image'|'video'|'vision'|'text'
- * @param params   { resolution?, duration?, tier? }
+ * @param params   { resolution?, duration? }
  * @param defaults 类别兜底价 { image, video, vision, text }（积分）
  */
 export function computePrice(model, category, params = {}, defaults = {}) {
   const pricing = (model && model.pricing) || {};
-  let baseCredits = typeof pricing.base === 'number' ? pricing.base
-    : (typeof defaults[category] === 'number' ? defaults[category] : 0);
-
-  let mult = 1;
-  if (category === 'image' && params.resolution && pricing.byResolution) {
-    mult *= pricing.byResolution[String(params.resolution).toLowerCase()] ?? 1;
+  if (category === 'image' && params.resolution != null && pricing.byResolution) {
+    const v = pricing.byResolution[String(params.resolution).toLowerCase()];
+    if (typeof v === 'number') return Math.round(v * 100);
   }
-  if (category === 'video') {
-    if (params.duration != null && pricing.byDuration) mult *= pricing.byDuration[durationKey(params.duration)] ?? 1;
-    if (params.tier && pricing.byTier) mult *= pricing.byTier[params.tier] ?? 1;
+  if (category === 'video' && params.duration != null && pricing.byDuration) {
+    const v = pricing.byDuration[durationKey(params.duration)];
+    if (typeof v === 'number') return Math.round(v * 100);
   }
-  return Math.round(baseCredits * mult * 100);
+  if (typeof pricing.base === 'number') return Math.round(pricing.base * 100);
+  if (typeof defaults[category] === 'number') return Math.round(defaults[category] * 100);
+  return 0;
 }
 
 const DEFAULT_PRICES = { image: 0, video: 0, vision: 0, text: 0 };
