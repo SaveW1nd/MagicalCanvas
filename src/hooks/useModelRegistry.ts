@@ -106,8 +106,8 @@ export function useModelRegistry(): Registry {
 }
 
 /**
- * 按当前档位算某模型一次生成扣多少积分。无配置 → null（免费/不显示）。
- * 图片看分辨率、视频看时长；都没命中时回退模型单价 base。
+ * 按当前档位算某模型一次生成扣多少积分（积分，可小数）。无 base 配置 → null（不显示）。
+ * 最终 = 基础价 base × 命中倍率（图片看分辨率、视频看时长；未命中 ×1）。
  */
 export function modelTierPriceCredits(
     model: { pricing?: Record<string, any> } | undefined,
@@ -115,15 +115,15 @@ export function modelTierPriceCredits(
     params: { resolution?: string; duration?: number },
 ): number | null {
     const p = model?.pricing;
-    if (!p) return null;
+    if (!p || typeof p.base !== 'number') return null;
+    let mult = 1;
     if (category === 'image' && params.resolution && p.byResolution) {
         const v = p.byResolution[String(params.resolution).toLowerCase()];
-        if (typeof v === 'number') return v;
+        if (typeof v === 'number') mult = v;
     }
     if (category === 'video' && params.duration != null && p.byDuration) {
         const v = p.byDuration[`${parseInt(String(params.duration), 10)}s`];
-        if (typeof v === 'number') return v;
+        if (typeof v === 'number') mult = v;
     }
-    if (typeof p.base === 'number') return p.base;
-    return null;
+    return Math.round(p.base * mult * 100) / 100;
 }

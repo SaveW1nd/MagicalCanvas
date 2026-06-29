@@ -15,10 +15,9 @@ export function toCredits(units) { return Math.round(Number(units || 0)) / 100; 
 function durationKey(d) { return `${parseInt(d, 10)}s`; }
 
 /**
- * 计算一次生成的价格（返回 units 整数）。直接按档位定价（积分绝对值，非系数）：
- * - 图片：pricing.byResolution[分辨率] 命中即用该价
- * - 视频：pricing.byDuration[时长] 命中即用该价
- * - 否则用模型单价 pricing.base；再否则用类别兜底价 defaults[category]；都没有 = 0。
+ * 计算一次生成的价格（返回 units 整数）。基础价 × 命中倍率：
+ * - 基础价 = pricing.base（没配则用类别兜底价 defaults[category]，再没有 = 0）
+ * - 倍率：图片看 pricing.byResolution[分辨率]、视频看 pricing.byDuration[时长]；未命中 = ×1
  * @param model    registry 模型对象（含 category 与 pricing）
  * @param category 'image'|'video'|'vision'|'text'
  * @param params   { resolution?, duration? }
@@ -26,17 +25,18 @@ function durationKey(d) { return `${parseInt(d, 10)}s`; }
  */
 export function computePrice(model, category, params = {}, defaults = {}) {
   const pricing = (model && model.pricing) || {};
+  const baseCredits = typeof pricing.base === 'number' ? pricing.base
+    : (typeof defaults[category] === 'number' ? defaults[category] : 0);
+  let mult = 1;
   if (category === 'image' && params.resolution != null && pricing.byResolution) {
     const v = pricing.byResolution[String(params.resolution).toLowerCase()];
-    if (typeof v === 'number') return Math.round(v * 100);
+    if (typeof v === 'number') mult = v;
   }
   if (category === 'video' && params.duration != null && pricing.byDuration) {
     const v = pricing.byDuration[durationKey(params.duration)];
-    if (typeof v === 'number') return Math.round(v * 100);
+    if (typeof v === 'number') mult = v;
   }
-  if (typeof pricing.base === 'number') return Math.round(pricing.base * 100);
-  if (typeof defaults[category] === 'number') return Math.round(defaults[category] * 100);
-  return 0;
+  return Math.round(baseCredits * mult * 100);
 }
 
 const DEFAULT_PRICES = { image: 0, video: 0, vision: 0, text: 0 };

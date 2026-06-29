@@ -1111,6 +1111,19 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2">
+                        {/* 实时「最终积分」：跟随当前模型 + 分辨率/时长变化，省得回模型下拉里看 */}
+                        {registry.billingEnabled && (() => {
+                            const c = isVideoNode
+                                ? modelTierPriceCredits(currentVideoModel as any, 'video', { duration: currentDuration })
+                                : modelTierPriceCredits(currentImageModel as any, 'image', { resolution: data.resolution });
+                            if (c == null || c <= 0) return null;
+                            return (
+                                <span className="flex items-center gap-1 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5" title="本次生成预计消耗积分">
+                                    <Sparkles size={12} />{c}
+                                </span>
+                            );
+                        })()}
+
                         {/* Unified Size/Ratio Dropdown (hidden for video nodes in motion-control mode) */}
                         {!(isVideoNode && videoGenerationMode === 'motion-control') && (
                             <div className="relative" ref={dropdownRef}>

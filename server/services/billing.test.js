@@ -9,28 +9,28 @@ describe('units', () => {
   });
 });
 
-describe('computePrice (单位=units，直接档位价)', () => {
+describe('computePrice (单位=units，基础价×倍率)', () => {
   const defaults = { image: 2, video: 20, vision: 0.5, text: 0.2 };
 
-  it('图片：按分辨率直接定价', () => {
-    const m = { category: 'image', pricing: { byResolution: { '1k': 2, '2k': 4, '4k': 8 } } };
-    expect(computePrice(m, 'image', { resolution: '4k' }, defaults)).toBe(800);
-    expect(computePrice(m, 'image', { resolution: '1K' }, defaults)).toBe(200); // 大小写不敏感
+  it('图片：base × 分辨率倍率', () => {
+    const m = { category: 'image', pricing: { base: 2, byResolution: { '1k': 1, '2k': 1.5, '4k': 2 } } };
+    expect(computePrice(m, 'image', { resolution: '4k' }, defaults)).toBe(400); // 2×2
+    expect(computePrice(m, 'image', { resolution: '2K' }, defaults)).toBe(300); // 2×1.5，大小写不敏感
+    expect(computePrice(m, 'image', { resolution: '8k' }, defaults)).toBe(200); // 未命中→×1
   });
 
-  it('视频：按时长直接定价', () => {
-    const m = { category: 'video', pricing: { byDuration: { '5s': 10, '10s': 20 } } };
-    expect(computePrice(m, 'video', { duration: 10 }, defaults)).toBe(2000);
-    expect(computePrice(m, 'video', { duration: 5 }, defaults)).toBe(1000);
+  it('视频：base × 时长倍率', () => {
+    const m = { category: 'video', pricing: { base: 10, byDuration: { '5s': 1, '10s': 2 } } };
+    expect(computePrice(m, 'video', { duration: 10 }, defaults)).toBe(2000); // 10×2
+    expect(computePrice(m, 'video', { duration: 5 }, defaults)).toBe(1000); // 10×1
   });
 
-  it('视觉/文字：用模型单价 base', () => {
+  it('视觉/文字：只用 base（无倍率）', () => {
     expect(computePrice({ category: 'vision', pricing: { base: 0.5 } }, 'vision', {}, defaults)).toBe(50);
   });
 
-  it('档位没命中 → 回退模型 base，再回退类别兜底', () => {
-    expect(computePrice({ category: 'image', pricing: { base: 3 } }, 'image', { resolution: '8k' }, defaults)).toBe(300); // 8k 未配 → base 3
-    expect(computePrice({ category: 'image', pricing: {} }, 'image', { resolution: '4k' }, defaults)).toBe(200); // 全未配 → 兜底 2
+  it('没配 base → 用类别兜底价当 base', () => {
+    expect(computePrice({ category: 'image', pricing: { byResolution: { '4k': 2 } } }, 'image', { resolution: '4k' }, defaults)).toBe(400); // 兜底2 ×2
   });
 
   it('什么都没配 → 0(免费)', () => {
