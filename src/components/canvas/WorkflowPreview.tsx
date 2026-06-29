@@ -8,6 +8,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Loader2, GitFork, Image as ImageIcon, Film, Type as TypeIcon, Layers } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR } from '../../utils/swrCache';
 
 const NODE_W = 200;
 const NODE_H = 130;
@@ -42,27 +43,15 @@ export const WorkflowPreview: React.FC<{
     fork?: { publicId: string; onForked: (newWorkflowId: string) => void }; // 提供则显示「复制到我的工作流」
     badge?: string;                                    // 头部徽标(如「公共」);不传则不显示
 }> = ({ fetchUrl, onClose, fork, badge }) => {
-    const [loading, setLoading] = useState(true);
-    const [title, setTitle] = useState('');
-    const [nodes, setNodes] = useState<PreviewNode[]>([]);
     const [forking, setForking] = useState(false);
     const [view, setView] = useState({ x: 0, y: 0, zoom: 1 });
     const stageRef = useRef<HTMLDivElement>(null);
     const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
-    useEffect(() => {
-        let alive = true;
-        setLoading(true);
-        apiFetch(fetchUrl)
-            .then(wf => {
-                if (!alive) return;
-                setTitle(wf.title || '未命名');
-                setNodes(Array.isArray(wf.nodes) ? wf.nodes : []);
-            })
-            .catch(e => { if (alive) showToast(e instanceof Error ? e.message : '加载失败', 'error'); })
-            .finally(() => { if (alive) setLoading(false); });
-        return () => { alive = false; };
-    }, [fetchUrl]);
+    // 预览内容(title/nodes)按 fetchUrl 缓存:同一工作流再次预览即时显示、不再转圈;后台静默刷新。
+    const { data: wf, loading } = useSWR<{ title?: string; nodes?: PreviewNode[] }>(`wf-preview:${fetchUrl}`, () => apiFetch(fetchUrl));
+    const title: string = wf?.title || '未命名';
+    const nodes: PreviewNode[] = Array.isArray(wf?.nodes) ? wf.nodes : [];
 
     // 内容包围盒
     const bbox = useMemo(() => {
