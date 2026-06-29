@@ -253,7 +253,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
                         <div>
                             <label className="block text-xs text-neutral-400 mb-1">金额（积分，支持小数）</label>
                             <input type="number" step="0.01" min="0" value={creditAmount} onChange={e => setCreditAmount(e.target.value)} placeholder="如 100"
-                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500" />
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                         </div>
                         <div>
                             <label className="block text-xs text-neutral-400 mb-1">备注（可选）</label>
