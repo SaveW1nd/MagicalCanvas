@@ -836,7 +836,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
 
                                 {/* Model Dropdown Menu */}
                                 {showModelDropdown && (
-                                    <div className="absolute top-full mt-1 left-0 w-52 bg-[#252525] border border-neutral-700 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
+                                    <div className="absolute top-full mt-1 left-0 w-64 bg-[#252525] border border-neutral-700 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
                                         {/* Mode indicator */}
                                         <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider bg-[#1a1a1a] border-b border-neutral-700 flex items-center gap-1.5">
                                             <span className={`w-1.5 h-1.5 rounded-full ${videoGenerationMode === 'text-to-video' ? 'bg-blue-400' :
@@ -862,8 +862,8 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                             }`}
                                                     >
                                                         <span className="flex items-center gap-2">
-                                                            <Film size={12} className="text-cyan-400" />
-                                                            {model.name}
+                                                            <Film size={12} className="text-cyan-400 shrink-0" />
+                                                            <span className="whitespace-nowrap">{model.name}</span>
                                             {model.recommended && (
                                                                 <span className="text-[9px] px-1 py-0.5 bg-green-600/30 text-green-400 rounded">推荐</span>
                                                             )}
@@ -983,7 +983,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
 
                                 {/* Image Model Dropdown Menu */}
                                 {showModelDropdown && (
-                                    <div className="absolute top-full mt-1 left-0 w-48 bg-[#252525] border border-neutral-700 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
+                                    <div className="absolute top-full mt-1 left-0 w-64 bg-[#252525] border border-neutral-700 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
                                         {/* Mode indicator */}
                                         <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider bg-[#1a1a1a] border-b border-neutral-700 flex items-center gap-1.5">
                                             <span className={`w-1.5 h-1.5 rounded-full ${imageGenerationMode === 'text-to-image' ? 'bg-blue-400' :
@@ -1007,8 +1007,8 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                             }`}
                                                     >
                                                         <span className="flex items-center gap-2">
-                                                            <Banana size={12} className="text-yellow-400" />
-                                                            {model.name}
+                                                            <Banana size={12} className="text-yellow-400 shrink-0" />
+                                                            <span className="whitespace-nowrap">{model.name}</span>
                                             {model.recommended && (
                                                                 <span className="text-[9px] px-1 py-0.5 bg-green-600/30 text-green-400 rounded">推荐</span>
                                                             )}
