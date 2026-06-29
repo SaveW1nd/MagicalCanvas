@@ -32,6 +32,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+// 在 Cloudflare Tunnel/反代后面:cloudflared 在本机(loopback)转发并带 X-Forwarded-For。
+// 设 trust proxy 让 req.ip / express-rate-limit 取到真实客户端 IP(否则报 ERR_ERL_UNEXPECTED_X_FORWARDED_FOR,
+// 且会把所有用户当成同一个代理 IP 限流)。
+app.set('trust proxy', 'loopback');
 const PORT = process.env.PORT || 3501;
 
 // Ensure library directories exist
