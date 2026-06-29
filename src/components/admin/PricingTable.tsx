@@ -56,6 +56,9 @@ export const PricingTable: React.FC = () => {
     const editBase = (m: RegistryModel, v: string) => {
         setDraft(d => { const p = { ...pricingOf(m) }; if (v === '') delete p.base; else p.base = Number(v); return { ...d, [m.id]: p }; });
     };
+    const editPerSecond = (m: RegistryModel, v: string) => {
+        setDraft(d => { const p = { ...pricingOf(m) }; if (v === '') delete p.perSecond; else p.perSecond = Number(v); return { ...d, [m.id]: p }; });
+    };
 
     const saveAll = async () => {
         const ids = Object.keys(draft);
@@ -89,11 +92,6 @@ export const PricingTable: React.FC = () => {
         if (Array.isArray(r) && r.length) return r;
         return m.category === 'video' ? ['720p', '1080p'] : ['1K', '2K', '4K'];
     };
-    const durationsOf = (m: RegistryModel): number[] => {
-        const d = (m.capabilities as any)?.durations;
-        return Array.isArray(d) && d.length ? d : [5, 10];
-    };
-
     return (
         <div className="flex flex-col gap-5 max-w-3xl">
             {/* 顶部：标题 + 保存 + 计费总开关 */}
@@ -103,7 +101,7 @@ export const PricingTable: React.FC = () => {
                         模型价格 {loading && !data && <Loader2 size={14} className="animate-spin text-neutral-500" />}
                     </h2>
                     <p className="text-xs text-neutral-500 leading-relaxed">
-                        最终积分 = <span className="text-neutral-400">基础价 × 命中倍率</span>。倍率留空 = ×1，基础价留空 = 免费。改完点右侧「保存」。
+                        图片 = <span className="text-neutral-400">基础价 × 分辨率倍率</span>；视频 = <span className="text-neutral-400">每秒积分 × 时长(秒)</span>；文字/看图 = 单价。留空 = 免费。改完点右侧「保存」。
                     </p>
                 </div>
                 <div className="shrink-0 flex items-center gap-2">
@@ -146,19 +144,19 @@ export const PricingTable: React.FC = () => {
                                             <div className="text-[11px] text-neutral-600 font-mono">{m.modelId}</div>
                                         </div>
                                         <div className="flex items-end gap-3 flex-wrap">
-                                            <TierField label="基础价" value={p.base} onChange={v => editBase(m, v)} />
-                                            {cat === 'image' && resolutionsOf(m).map(r => (
-                                                <TierField key={r} label={`${r} ×`} placeholder="1" value={p.byResolution?.[r.toLowerCase()]}
-                                                    onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} />
-                                            ))}
-                                            {cat === 'video' && durationsOf(m).map(n => (
-                                                <TierField key={`d${n}`} label={`${n}s ×`} placeholder="1" value={p.byDuration?.[`${n}s`]}
-                                                    onChange={v => editTier(m, 'byDuration', `${n}s`, v)} />
-                                            ))}
-                                            {cat === 'video' && resolutionsOf(m).map(r => (
-                                                <TierField key={`r${r}`} label={`${r} ×`} placeholder="1" value={p.byResolution?.[r.toLowerCase()]}
-                                                    onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} />
-                                            ))}
+                                            {cat === 'image' && <>
+                                                <TierField label="基础价" value={p.base} onChange={v => editBase(m, v)} />
+                                                {resolutionsOf(m).map(r => (
+                                                    <TierField key={r} label={`${r} ×`} placeholder="1" value={p.byResolution?.[r.toLowerCase()]}
+                                                        onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} />
+                                                ))}
+                                            </>}
+                                            {cat === 'video' && (
+                                                <TierField label="每秒积分" value={p.perSecond} onChange={v => editPerSecond(m, v)} />
+                                            )}
+                                            {(cat === 'text' || cat === 'vision') && (
+                                                <TierField label="单价" value={p.base} onChange={v => editBase(m, v)} />
+                                            )}
                                         </div>
                                     </div>
                                 );

@@ -115,17 +115,20 @@ export function modelTierPriceCredits(
     params: { resolution?: string; duration?: number },
 ): number | null {
     const p = model?.pricing;
-    if (!p || typeof p.base !== 'number') return null;
+    if (!p) return null;
+    // 视频：每秒积分 × 时长
+    if (category === 'video') {
+        if (typeof p.perSecond !== 'number') return null;
+        const secs = params.duration != null ? parseInt(String(params.duration), 10) : 0;
+        if (!(secs > 0)) return null;
+        return Math.round(p.perSecond * secs * 100) / 100;
+    }
+    // 图片：基础价 × 分辨率倍率
+    if (typeof p.base !== 'number') return null;
     let mult = 1;
-    // 分辨率倍率：图片(1K/2K/4K)与视频(720p/1080p)都适用
     if (params.resolution && p.byResolution) {
         const v = p.byResolution[String(params.resolution).toLowerCase()];
-        if (typeof v === 'number') mult *= v;
-    }
-    // 时长倍率：视频
-    if (params.duration != null && p.byDuration) {
-        const v = p.byDuration[`${parseInt(String(params.duration), 10)}s`];
-        if (typeof v === 'number') mult *= v;
+        if (typeof v === 'number') mult = v;
     }
     return Math.round(p.base * mult * 100) / 100;
 }

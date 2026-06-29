@@ -19,11 +19,11 @@ describe('computePrice (单位=units，基础价×倍率)', () => {
     expect(computePrice(m, 'image', { resolution: '8k' }, defaults)).toBe(200); // 未命中→×1
   });
 
-  it('视频：base × 时长倍率 × 分辨率倍率', () => {
-    const m = { category: 'video', pricing: { base: 10, byDuration: { '5s': 1, '10s': 2 }, byResolution: { '720p': 1, '1080p': 1.5 } } };
-    expect(computePrice(m, 'video', { duration: 10, resolution: '1080p' }, defaults)).toBe(3000); // 10×2×1.5
-    expect(computePrice(m, 'video', { duration: 5, resolution: '720p' }, defaults)).toBe(1000); // 10×1×1
-    expect(computePrice(m, 'video', { duration: 10 }, defaults)).toBe(2000); // 无分辨率→该维度×1
+  it('视频：每秒积分 × 时长', () => {
+    const m = { category: 'video', pricing: { perSecond: 15 } };
+    expect(computePrice(m, 'video', { duration: 8 }, defaults)).toBe(12000); // 15×8 = 120 积分
+    expect(computePrice(m, 'video', { duration: 10 }, defaults)).toBe(15000); // 15×10 = 150 积分
+    expect(computePrice(m, 'video', {}, defaults)).toBe(0); // 没时长 → 0
   });
 
   it('视觉/文字：只用 base（无倍率）', () => {
