@@ -117,13 +117,15 @@ export function modelTierPriceCredits(
     const p = model?.pricing;
     if (!p || typeof p.base !== 'number') return null;
     let mult = 1;
-    if (category === 'image' && params.resolution && p.byResolution) {
+    // 分辨率倍率：图片(1K/2K/4K)与视频(720p/1080p)都适用
+    if (params.resolution && p.byResolution) {
         const v = p.byResolution[String(params.resolution).toLowerCase()];
-        if (typeof v === 'number') mult = v;
+        if (typeof v === 'number') mult *= v;
     }
-    if (category === 'video' && params.duration != null && p.byDuration) {
+    // 时长倍率：视频
+    if (params.duration != null && p.byDuration) {
         const v = p.byDuration[`${parseInt(String(params.duration), 10)}s`];
-        if (typeof v === 'number') mult = v;
+        if (typeof v === 'number') mult *= v;
     }
     return Math.round(p.base * mult * 100) / 100;
 }

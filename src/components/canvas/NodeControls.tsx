@@ -870,7 +870,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                                         </span>
                                                         <span className="flex items-center gap-2">
                                                             {(() => {
-                                                                const c = registry.billingEnabled ? modelTierPriceCredits(model as any, 'video', { duration: currentDuration }) : null;
+                                                                const c = registry.billingEnabled ? modelTierPriceCredits(model as any, 'video', { duration: currentDuration, resolution: data.resolution }) : null;
                                                                 return c != null && c > 0
                                                                     ? <span className="flex items-center gap-0.5 text-amber-300" title="本次生成消耗积分"><Sparkles size={10} />{c}</span>
                                                                     : null;
@@ -1114,7 +1114,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                         {/* 实时「最终积分」：跟随当前模型 + 分辨率/时长变化，省得回模型下拉里看 */}
                         {registry.billingEnabled && (() => {
                             const c = isVideoNode
-                                ? modelTierPriceCredits(currentVideoModel as any, 'video', { duration: currentDuration })
+                                ? modelTierPriceCredits(currentVideoModel as any, 'video', { duration: currentDuration, resolution: data.resolution })
                                 : modelTierPriceCredits(currentImageModel as any, 'image', { resolution: data.resolution });
                             if (c == null || c <= 0) return null;
                             return (

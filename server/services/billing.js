@@ -28,13 +28,15 @@ export function computePrice(model, category, params = {}, defaults = {}) {
   const baseCredits = typeof pricing.base === 'number' ? pricing.base
     : (typeof defaults[category] === 'number' ? defaults[category] : 0);
   let mult = 1;
-  if (category === 'image' && params.resolution != null && pricing.byResolution) {
+  // 分辨率倍率：图片(1K/2K/4K)与视频(720p/1080p)都适用
+  if (params.resolution != null && pricing.byResolution) {
     const v = pricing.byResolution[String(params.resolution).toLowerCase()];
-    if (typeof v === 'number') mult = v;
+    if (typeof v === 'number') mult *= v;
   }
-  if (category === 'video' && params.duration != null && pricing.byDuration) {
+  // 时长倍率：视频
+  if (params.duration != null && pricing.byDuration) {
     const v = pricing.byDuration[durationKey(params.duration)];
-    if (typeof v === 'number') mult = v;
+    if (typeof v === 'number') mult *= v;
   }
   return Math.round(baseCredits * mult * 100);
 }

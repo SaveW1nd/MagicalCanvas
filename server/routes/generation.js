@@ -269,7 +269,7 @@ router.post('/generate-video', async (req, res) => {
 
         // 积分预检（管理员/总开关关 → 豁免）
         if (!isExempt(req.user)) {
-            const q = quote(req.user, 'video', videoModel, { duration, tier: videoModel });
+            const q = quote(req.user, 'video', videoModel, { duration, resolution, tier: videoModel });
             if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
         }
 
@@ -474,7 +474,7 @@ router.post('/generate-video', async (req, res) => {
         console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
         // 成功后扣费（管理员/总开关关 → 豁免）
         if (!isExempt(req.user)) {
-            try { charge(req.user, { category: 'video', modelId: videoModel, params: { duration, tier: videoModel }, refId: nodeId || saved.id }); }
+            try { charge(req.user, { category: 'video', modelId: videoModel, params: { duration, resolution, tier: videoModel }, refId: nodeId || saved.id }); }
             catch (e) { console.error('[billing] charge video failed:', e.message); }
         }
         return res.json({ resultUrl });

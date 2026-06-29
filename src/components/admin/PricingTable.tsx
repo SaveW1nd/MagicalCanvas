@@ -86,7 +86,8 @@ export const PricingTable: React.FC = () => {
 
     const resolutionsOf = (m: RegistryModel): string[] => {
         const r = (m.capabilities as any)?.resolutions;
-        return Array.isArray(r) && r.length ? r : ['1K', '2K', '4K'];
+        if (Array.isArray(r) && r.length) return r;
+        return m.category === 'video' ? ['720p', '1080p'] : ['1K', '2K', '4K'];
     };
     const durationsOf = (m: RegistryModel): number[] => {
         const d = (m.capabilities as any)?.durations;
@@ -151,8 +152,12 @@ export const PricingTable: React.FC = () => {
                                                     onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} />
                                             ))}
                                             {cat === 'video' && durationsOf(m).map(n => (
-                                                <TierField key={n} label={`${n}s ×`} placeholder="1" value={p.byDuration?.[`${n}s`]}
+                                                <TierField key={`d${n}`} label={`${n}s ×`} placeholder="1" value={p.byDuration?.[`${n}s`]}
                                                     onChange={v => editTier(m, 'byDuration', `${n}s`, v)} />
+                                            ))}
+                                            {cat === 'video' && resolutionsOf(m).map(r => (
+                                                <TierField key={`r${r}`} label={`${r} ×`} placeholder="1" value={p.byResolution?.[r.toLowerCase()]}
+                                                    onChange={v => editTier(m, 'byResolution', r.toLowerCase(), v)} />
                                             ))}
                                         </div>
                                     </div>
