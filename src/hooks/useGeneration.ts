@@ -9,6 +9,7 @@ import { NodeData, NodeType, NodeStatus } from '../types';
 import { generateImage, generateVideo } from '../services/generationService';
 import { generateLocalImage } from '../services/localModelService';
 import { extractVideoLastFrame } from '../utils/videoHelpers';
+import { invalidateCache } from '../utils/swrCache';
 
 interface UseGenerationProps {
     nodes: NodeData[];
@@ -178,6 +179,10 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     errorMessage: undefined
                 });
 
+                // 新结果落库,失效 History/Library 列表缓存,下次打开立即可见
+                invalidateCache('assets:');
+                invalidateCache('library');
+
 
             } else if (node.type === NodeType.LOCAL_IMAGE_MODEL) {
                 // --- LOCAL MODEL GENERATION ---
@@ -223,6 +228,10 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                         resultAspectRatio,
                         errorMessage: undefined
                     });
+
+                    // 新结果落库,失效 History/Library 列表缓存,下次打开立即可见
+                    invalidateCache('assets:');
+                    invalidateCache('library');
                 } else {
                     throw new Error(result.error || 'Local generation failed');
                 }
@@ -377,6 +386,10 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     lastFrame,
                     errorMessage: undefined // Clear any previous error
                 });
+
+                // 新结果落库,失效 History/Library 列表缓存,下次打开立即可见
+                invalidateCache('assets:');
+                invalidateCache('library');
 
 
             }
