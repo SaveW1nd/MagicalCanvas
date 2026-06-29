@@ -21,6 +21,15 @@ const CAT_ORDER = ['image', 'video', 'vision', 'text'];
 
 const numCls = 'w-[68px] bg-neutral-900/80 border border-neutral-700/80 rounded-lg px-2 py-1.5 text-sm text-white text-center outline-none transition-colors focus:border-blue-500 hover:border-neutral-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none placeholder:text-neutral-600';
 
+// 模块级组件：必须放在 PricingTable 外面，否则每次输入 re-render 会重建输入框、丢失焦点（无法连续输入）。
+const TierField: React.FC<{ label: string; value: any; onChange: (v: string) => void; placeholder?: string }> = ({ label, value, onChange, placeholder }) => (
+    <div className="flex flex-col items-center gap-1">
+        <span className="text-[11px] text-neutral-500">{label}</span>
+        <input type="number" step="0.01" min="0" placeholder={placeholder ?? '免费'} value={value ?? ''}
+            onChange={e => onChange(e.target.value)} className={numCls} />
+    </div>
+);
+
 export const PricingTable: React.FC = () => {
     const { data, loading, refetch } = useSWR<{ models: RegistryModel[] }>('admin:models', () => api('/api/admin/models'));
     const cfg = useSWR<{ enabled: boolean }>('admin:billing-config', () => api('/api/admin/billing-config'));
@@ -83,14 +92,6 @@ export const PricingTable: React.FC = () => {
         const d = (m.capabilities as any)?.durations;
         return Array.isArray(d) && d.length ? d : [5, 10];
     };
-
-    const TierField: React.FC<{ label: string; value: any; onChange: (v: string) => void; placeholder?: string }> = ({ label, value, onChange, placeholder }) => (
-        <div className="flex flex-col items-center gap-1">
-            <span className="text-[11px] text-neutral-500">{label}</span>
-            <input type="number" step="0.01" min="0" placeholder={placeholder ?? '免费'} value={value ?? ''}
-                onChange={e => onChange(e.target.value)} className={numCls} />
-        </div>
-    );
 
     return (
         <div className="flex flex-col gap-5 max-w-3xl">
