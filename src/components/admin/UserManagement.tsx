@@ -1,9 +1,10 @@
 /**
  * UserManagement.tsx — admin user CRUD with confirm dialogs, toasts, custom modals.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Loader2, UserPlus, Trash2, KeyRound, ShieldCheck, ShieldOff, Ban, CheckCircle2 } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Tip } from '../ui/Tip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { SetPasswordModal } from './SetPasswordModal';
@@ -34,8 +35,8 @@ interface PendingConfirm {
 }
 
 export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUserId }) => {
-    const [users, setUsers] = useState<AdminUser[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { data: usersData, loading, refetch: refetchUsers } = useSWR<{ users: AdminUser[] }>('admin:users', () => adminFetch('/api/admin/users'));
+    const users = usersData?.users ?? [];
     // create form
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -46,14 +47,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
     const [confirmLoading, setConfirmLoading] = useState(false);
     const [resetUser, setResetUser] = useState<AdminUser | null>(null);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try { setUsers((await adminFetch('/api/admin/users')).users); }
-        catch (e) { showToast(e instanceof Error ? e.message : '加载失败', 'error'); }
-        finally { setLoading(false); }
-    }, []);
-
-    useEffect(() => { load(); }, [load]);
+    const reload = () => { invalidateCache('admin:users'); refetchUsers(); };
 
     const create = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -66,7 +60,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
             });
             showToast(r.defaultPassword ? `已创建「${username.trim()}」，初始密码：${r.defaultPassword}` : `已创建用户「${username.trim()}」`, 'success', 5000);
             setUsername(''); setPassword(''); setRole('user');
-            await load();
+            reload();
         } catch (e) { showToast(e instanceof Error ? e.message : '创建失败', 'error'); }
         finally { setCreating(false); }
     };
@@ -76,7 +70,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
         setConfirmLoading(true);
         try {
             const msg = await confirmState.run();
-            await load();
+            reload();
             setConfirmState(null);
             showToast(msg || '操作成功', 'success');
         } catch (e) { showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
@@ -114,6 +108,7 @@ export const UserManagement: React.FC<{ currentUserId: string }> = ({ currentUse
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword: pw }),
         });
         showToast(r.defaultPassword ? `已重置为默认密码：${r.defaultPassword}` : '密码已重置', 'success', 5000);
+        reload();
     };
 
     return (

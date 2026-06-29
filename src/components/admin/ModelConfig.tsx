@@ -8,9 +8,10 @@
  * The canvas reads the enabled models from /api/models; generation resolves
  * each model's provider for baseUrl + apiKey.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Loader2, Plus, Trash2, Pencil, Plug, ListChecks, Star, CheckCircle2, Circle } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Tip } from '../ui/Tip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ProviderModal } from './ProviderModal';
@@ -31,9 +32,9 @@ async function api(url: string, init?: RequestInit) {
 }
 
 export const ModelConfig: React.FC = () => {
-    const [providers, setProviders] = useState<Provider[]>([]);
-    const [models, setModels] = useState<RegistryModel[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { data: modelData, loading, refetch: refetchModels } = useSWR<{ models: RegistryModel[]; providers: Provider[] }>('admin:models', () => api('/api/admin/models'));
+    const models = modelData?.models ?? [];
+    const providers = modelData?.providers ?? [];
     const [testingId, setTestingId] = useState<string | null>(null);
 
     const [providerModal, setProviderModal] = useState<{ open: boolean; provider?: Provider }>({ open: false });
@@ -41,15 +42,7 @@ export const ModelConfig: React.FC = () => {
     const [confirm, setConfirm] = useState<{ title: string; message: string; run: () => Promise<string> } | null>(null);
     const [confirmBusy, setConfirmBusy] = useState(false);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const d = await api('/api/admin/models');
-            setModels(d.models); setProviders(d.providers);
-        } catch (e) { showToast(e instanceof Error ? e.message : '加载失败', 'error'); }
-        finally { setLoading(false); }
-    }, []);
-    useEffect(() => { load(); }, [load]);
+    const reload = useCallback(async () => { invalidateCache('admin:models'); await refetchModels(); }, [refetchModels]);
 
     const providerName = (id: string) => providers.find(p => p.id === id)?.name || '—';
 
@@ -65,7 +58,7 @@ export const ModelConfig: React.FC = () => {
     const runConfirm = async () => {
         if (!confirm) return;
         setConfirmBusy(true);
-        try { const msg = await confirm.run(); await load(); setConfirm(null); showToast(msg, 'success'); }
+        try { const msg = await confirm.run(); await reload(); setConfirm(null); showToast(msg, 'success'); }
         catch (e) { showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
         finally { setConfirmBusy(false); }
     };
@@ -80,12 +73,12 @@ export const ModelConfig: React.FC = () => {
     });
 
     const toggleEnabled = async (m: RegistryModel) => {
-        try { await api(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !m.enabled }) }); await load(); }
+        try { await api(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !m.enabled }) }); await reload(); }
         catch (e) { showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
     };
     const setDefault = async (m: RegistryModel) => {
         if (m.isDefault) return;
-        try { await api(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isDefault: true }) }); await load(); showToast(`已将「${m.label}」设为${CATEGORY_LABEL[m.category]}默认`, 'success'); }
+        try { await api(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isDefault: true }) }); await reload(); showToast(`已将「${m.label}」设为${CATEGORY_LABEL[m.category]}默认`, 'success'); }
         catch (e) { showToast(e instanceof Error ? e.message : '操作失败', 'error'); }
     };
 
@@ -192,7 +185,7 @@ export const ModelConfig: React.FC = () => {
                 open={providerModal.open}
                 provider={providerModal.provider}
                 onClose={() => setProviderModal({ open: false })}
-                onSaved={async () => { setProviderModal({ open: false }); await load(); }}
+                onSaved={async () => { setProviderModal({ open: false }); await reload(); }}
             />
             <ModelModal
                 open={modelModal.open}
@@ -200,7 +193,7 @@ export const ModelConfig: React.FC = () => {
                 presetCategory={modelModal.category}
                 providers={providers}
                 onClose={() => setModelModal({ open: false })}
-                onSaved={async () => { setModelModal({ open: false }); await load(); }}
+                onSaved={async () => { setModelModal({ open: false }); await reload(); }}
             />
             <ConfirmDialog
                 open={!!confirm}

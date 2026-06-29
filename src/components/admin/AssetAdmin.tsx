@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, RefreshCw, Globe, Trash2, LayoutGrid } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Select } from '../ui/Select';
 import { Tip } from '../ui/Tip';
 import { showAppConfirm } from '../ui/AppDialog';
@@ -64,16 +65,12 @@ function fmtDate(s: string | null): string {
 }
 
 export const AssetAdmin: React.FC = () => {
-    const [resp, setResp] = useState<AssetsResp | null>(null);
-    const [loading, setLoading] = useState(true);
     const [userId, setUserId] = useState('');
     const [visibility, setVisibility] = useState('');
     const [category, setCategory] = useState('');
     const [q, setQ] = useState('');
     const [debouncedQ, setDebouncedQ] = useState('');
 
-    const [workflows, setWorkflows] = useState<PublicWorkflow[]>([]);
-    const [wfLoading, setWfLoading] = useState(true);
     const [previewMedia, setPreviewMedia] = useState<string | null>(null);
     const [previewWorkflowId, setPreviewWorkflowId] = useState<string | null>(null);
 
@@ -82,37 +79,22 @@ export const AssetAdmin: React.FC = () => {
         return () => clearTimeout(t);
     }, [q]);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const params = new URLSearchParams();
-            if (userId) params.set('userId', userId);
-            if (visibility) params.set('visibility', visibility);
-            if (category) params.set('category', category);
-            if (debouncedQ) params.set('q', debouncedQ);
-            setResp(await adminFetch(`/api/admin/assets?${params.toString()}`));
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '加载失败', 'error');
-        } finally {
-            setLoading(false);
-        }
+    const params = useMemo(() => {
+        const p = new URLSearchParams();
+        if (userId) p.set('userId', userId);
+        if (visibility) p.set('visibility', visibility);
+        if (category) p.set('category', category);
+        if (debouncedQ) p.set('q', debouncedQ);
+        return p;
     }, [userId, visibility, category, debouncedQ]);
 
-    useEffect(() => { load(); }, [load]);
+    const assetsKey = `admin:assets:${params.toString()}`;
+    const { data: resp, loading, refetch: refetchAssets } = useSWR<AssetsResp>(assetsKey, () => adminFetch(`/api/admin/assets?${params.toString()}`));
+    const load = refetchAssets;
 
-    const loadWorkflows = useCallback(async () => {
-        setWfLoading(true);
-        try {
-            const data = await adminFetch('/api/admin/public-workflows');
-            setWorkflows(data.workflows || []);
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '加载公共工作流失败', 'error');
-        } finally {
-            setWfLoading(false);
-        }
-    }, []);
-
-    useEffect(() => { loadWorkflows(); }, [loadWorkflows]);
+    const { data: wfData, loading: wfLoading, refetch: refetchPublic } = useSWR<{ workflows: PublicWorkflow[] }>('admin:public-workflows', () => adminFetch('/api/admin/public-workflows'));
+    const workflows = wfData?.workflows ?? [];
+    const loadWorkflows = refetchPublic;
 
     const userOptions = useMemo(() => ([
         { value: '', label: '全部用户' },
@@ -137,30 +119,29 @@ export const AssetAdmin: React.FC = () => {
     const toggleVisibility = useCallback(async (a: Asset) => {
         const next = a.visibility === 'public' ? 'private' : 'public';
         try {
-            const data = await adminFetch(`/api/admin/assets/${a.id}/visibility`, {
+            await adminFetch(`/api/admin/assets/${a.id}/visibility`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ visibility: next }),
             });
-            const updated: Asset = data.asset || { ...a, visibility: next };
-            setResp(prev => prev ? { ...prev, assets: prev.assets.map(x => x.id === a.id ? updated : x) } : prev);
+            invalidateCache('admin:assets:'); refetchAssets();
             showToast(next === 'public' ? '已发布到公共' : '已下架为私有', 'success');
         } catch (e) {
             showToast(e instanceof Error ? e.message : '操作失败', 'error');
         }
-    }, []);
+    }, [refetchAssets]);
 
     const deleteAsset = useCallback(async (a: Asset) => {
         const ok = await showAppConfirm(`确定删除素材「${a.name}」吗？此操作不可撤销。`, { title: '删除素材', danger: true, confirmText: '删除' });
         if (!ok) return;
         try {
             await adminFetch(`/api/admin/assets/${a.id}`, { method: 'DELETE' });
-            setResp(prev => prev ? { ...prev, assets: prev.assets.filter(x => x.id !== a.id), total: Math.max(0, prev.total - 1) } : prev);
+            invalidateCache('admin:assets:'); refetchAssets();
             showToast('素材已删除', 'success');
         } catch (e) {
             showToast(e instanceof Error ? e.message : '删除失败', 'error');
         }
-    }, []);
+    }, [refetchAssets]);
 
     const deleteWorkflow = useCallback(async (w: PublicWorkflow) => {
         const ok = await showAppConfirm(`确定删除公共工作流「${w.title}」吗？此操作不可撤销。`, { title: '删除公共工作流', danger: true, confirmText: '删除' });
@@ -168,11 +149,11 @@ export const AssetAdmin: React.FC = () => {
         try {
             await adminFetch(`/api/admin/public-workflows/${w.id}`, { method: 'DELETE' });
             showToast('公共工作流已删除', 'success');
-            loadWorkflows();
+            invalidateCache('admin:public-workflows'); refetchPublic();
         } catch (e) {
             showToast(e instanceof Error ? e.message : '删除失败', 'error');
         }
-    }, [loadWorkflows]);
+    }, [refetchPublic]);
 
     return (
         <div className="max-w-6xl">

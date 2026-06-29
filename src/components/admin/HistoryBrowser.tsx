@@ -4,9 +4,10 @@
  * 跨用户浏览所有生成历史/画布/对话/剪辑，可按用户、类型、关键词筛选。只读浏览。
  * 数据来自 GET /api/admin/history（requireAdmin）。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, RefreshCw, Image as ImageIcon, Film, MessageSquare, LayoutGrid, Scissors, ExternalLink, Globe, Check } from 'lucide-react';
 import { showToast } from '../Toast';
+import { useSWR, invalidateCache } from '../../utils/swrCache';
 import { Select } from '../ui/Select';
 import { Tip } from '../ui/Tip';
 import { ExpandedMediaModal } from '../modals/ExpandedMediaModal';
@@ -66,8 +67,6 @@ function fmtDate(s: string | null): string {
 }
 
 export const HistoryBrowser: React.FC = () => {
-    const [resp, setResp] = useState<HistoryResp | null>(null);
-    const [loading, setLoading] = useState(true);
     const [userId, setUserId] = useState('');
     const [type, setType] = useState('');
     const [q, setQ] = useState('');
@@ -105,6 +104,8 @@ export const HistoryBrowser: React.FC = () => {
             const d = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(d.error || '发布失败');
             setPublished(prev => new Set(prev).add(k));
+            // 发布到公共会影响公共工作流 / 公共素材库列表,失效相应缓存
+            invalidateCache(isWf ? 'admin:public-workflows' : 'admin:assets:');
             showToast(isWf ? '已发布到公共工作流' : '已发布到公共素材库', 'success');
         } catch (e) {
             showToast(e instanceof Error ? e.message : '发布失败', 'error');
@@ -116,24 +117,19 @@ export const HistoryBrowser: React.FC = () => {
     // 筛选条件变化时回到第一页
     useEffect(() => { setOffset(0); }, [userId, type, debouncedQ]);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const params = new URLSearchParams();
-            if (userId) params.set('userId', userId);
-            if (type) params.set('type', type);
-            if (debouncedQ) params.set('q', debouncedQ);
-            params.set('limit', String(PAGE));
-            params.set('offset', String(offset));
-            setResp(await adminFetch(`/api/admin/history?${params.toString()}`));
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '加载失败', 'error');
-        } finally {
-            setLoading(false);
-        }
+    const params = useMemo(() => {
+        const p = new URLSearchParams();
+        if (userId) p.set('userId', userId);
+        if (type) p.set('type', type);
+        if (debouncedQ) p.set('q', debouncedQ);
+        p.set('limit', String(PAGE));
+        p.set('offset', String(offset));
+        return p;
     }, [userId, type, debouncedQ, offset]);
 
-    useEffect(() => { load(); }, [load]);
+    const histKey = `admin:history:${params.toString()}`;
+    const { data: resp, loading, refetch: refetchHist } = useSWR<HistoryResp>(histKey, () => adminFetch(`/api/admin/history?${params.toString()}`));
+    const load = refetchHist;
 
     const userOptions = useMemo(() => ([
         { value: '', label: '全部用户' },
