@@ -39,3 +39,10 @@ describe('computePrice (单位=units)', () => {
     expect(computePrice(m, 'image', {}, {})).toBe(0);
   });
 });
+
+import { isExempt } from './billing.js';
+describe('isExempt', () => {
+  it('总开关关 → 豁免', () => { expect(isExempt({ role: 'user' }, false)).toBe(true); });
+  it('开关开 + 普通用户 → 不豁免', () => { expect(isExempt({ role: 'user' }, true)).toBe(false); });
+  it('开关开 + 管理员 → 豁免', () => { expect(isExempt({ role: 'admin' }, true)).toBe(true); });
+});
