@@ -19,6 +19,7 @@ import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
+import creditsRoutes from './routes/credits.js';
 import { isExempt, quote, charge } from './services/billing.js';
 import modelsRoutes from './routes/models.js';
 import { requireAuth, requireAdmin } from './auth/middleware.js';
@@ -88,6 +89,9 @@ app.use('/api', (req, res, next) => {
 
 // 管理员后台 API（路由内部再校验 requireAdmin）
 app.use('/api/admin', adminRoutes);
+
+// 用户积分（余额/流水，requireAuth）
+app.use('/api/credits', creditsRoutes);
 
 // 模型注册表（画布读取可用模型清单；任意登录用户可读，不含密钥）
 app.use('/api/models', modelsRoutes);
