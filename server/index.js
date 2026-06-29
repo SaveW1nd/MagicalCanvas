@@ -25,7 +25,7 @@ import { bootstrapAdmin } from './auth/bootstrap.js';
 import { canAccess } from './auth/ownership.js';
 import { migrateOwnership } from './db/migrate-ownership.js';
 import { seedRegistryFromConfig, ensureAsrSeed } from './db/registry.js';
-import { userMediaDir, libUrlToPath } from './utils/imageHelpers.js';
+import { userMediaDir, libUrlToPath, saveBase64ToFile } from './utils/imageHelpers.js';
 import { uploadLibraryRel, ossEnabled, mimeFromName } from './utils/ossUploader.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -216,100 +216,45 @@ app.post('/api/settings/test', requireAdmin, async (req, res) => {
 // ============================================================================
 
 /**
- * Saves base64 data URL to a file and returns the file URL path.
- * @param {string} dataUrl - Base64 data URL (e.g., data:image/png;base64,...)
- * @returns {{ url: string } | null} - File URL path or null if not base64
- */
-function saveBase64ToFile(dataUrl) {
-    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
-        return null;
-    }
-
-    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!matches) return null;
-
-    const mimeType = matches[1];
-    const base64Data = matches[2];
-
-    try {
-        const buffer = Buffer.from(base64Data, 'base64');
-        const id = `wf_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-
-        let filename, targetDir, urlType;
-
-        if (mimeType.startsWith('video/')) {
-            filename = `${id}.mp4`;
-            targetDir = VIDEOS_DIR;
-            urlType = 'videos';
-        } else {
-            const ext = mimeType === 'image/jpeg' ? 'jpg' : 'png';
-            filename = `${id}.${ext}`;
-            targetDir = IMAGES_DIR;
-            urlType = 'images';
-        }
-
-        fs.writeFileSync(path.join(targetDir, filename), buffer);
-        console.log(`  [Workflow Sanitize] Saved base64 → /library/${urlType}/${filename}`);
-
-        return { url: `/library/${urlType}/${filename}` };
-    } catch (err) {
-        console.error('  [Workflow Sanitize] Failed to save base64:', err.message);
-        return null;
-    }
-}
-
-/**
- * Sanitizes workflow nodes by converting base64 data to file URLs.
+ * Sanitizes workflow nodes by converting base64 data to file URLs (本地双写 + OSS)。
  * Prevents large base64 strings from bloating workflow JSON files.
  * @param {Array} nodes - Array of workflow nodes
- * @returns {Array} - Sanitized nodes with file URLs instead of base64
+ * @returns {Promise<Array>} - Sanitized nodes with file/OSS URLs instead of base64
  */
-function sanitizeWorkflowNodes(nodes) {
+async function sanitizeWorkflowNodes(nodes) {
     if (!nodes || !Array.isArray(nodes)) return nodes;
 
     let sanitizedCount = 0;
 
-    const sanitized = nodes.map(node => {
+    const sanitized = await Promise.all(nodes.map(async node => {
         const cleanNode = { ...node };
 
         // Check resultUrl for base64 data
         if (cleanNode.resultUrl && cleanNode.resultUrl.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.resultUrl);
-            if (saved) {
-                cleanNode.resultUrl = saved.url;
-                sanitizedCount++;
-            }
+            const u = await saveBase64ToFile(cleanNode.resultUrl, IMAGES_DIR, VIDEOS_DIR);
+            if (u && u !== cleanNode.resultUrl) { cleanNode.resultUrl = u; sanitizedCount++; }
         }
 
         // Check lastFrame for base64 data (video nodes)
         if (cleanNode.lastFrame && cleanNode.lastFrame.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.lastFrame);
-            if (saved) {
-                cleanNode.lastFrame = saved.url;
-                sanitizedCount++;
-            }
+            const u = await saveBase64ToFile(cleanNode.lastFrame, IMAGES_DIR, VIDEOS_DIR);
+            if (u && u !== cleanNode.lastFrame) { cleanNode.lastFrame = u; sanitizedCount++; }
         }
 
         // Check editorCanvasData for base64 data (Image Editor)
         if (cleanNode.editorCanvasData && cleanNode.editorCanvasData.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.editorCanvasData);
-            if (saved) {
-                cleanNode.editorCanvasData = saved.url;
-                sanitizedCount++;
-            }
+            const u = await saveBase64ToFile(cleanNode.editorCanvasData, IMAGES_DIR, VIDEOS_DIR);
+            if (u && u !== cleanNode.editorCanvasData) { cleanNode.editorCanvasData = u; sanitizedCount++; }
         }
 
         // Check editorBackgroundUrl for base64 data (Image Editor)
         if (cleanNode.editorBackgroundUrl && cleanNode.editorBackgroundUrl.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.editorBackgroundUrl);
-            if (saved) {
-                cleanNode.editorBackgroundUrl = saved.url;
-                sanitizedCount++;
-            }
+            const u = await saveBase64ToFile(cleanNode.editorBackgroundUrl, IMAGES_DIR, VIDEOS_DIR);
+            if (u && u !== cleanNode.editorBackgroundUrl) { cleanNode.editorBackgroundUrl = u; sanitizedCount++; }
         }
 
         return cleanNode;
-    });
+    }));
 
     if (sanitizedCount > 0) {
         console.log(`[Workflow Sanitize] Converted ${sanitizedCount} base64 field(s) to file URLs`);
@@ -383,22 +328,34 @@ app.post('/api/library', async (req, res) => {
             }
             fs.writeFileSync(destPath, buffer);
             url = `/library/users/${req.user.id}/assets/${category}/${destFilename}`;
+            if (ossEnabled()) {
+                try { url = await uploadLibraryRel(buffer, `users/${req.user.id}/assets/${category}/${destFilename}`, mimeFromName(destFilename)); }
+                catch (e) { console.warn('[oss] /api/library upload failed:', e.message); }
+            }
             assetType = mimeType.startsWith('video/') ? 'video' : 'image';
         } else {
             // 已在服务器上的文件(生成结果/已有素材)→ 只引用,绝不复制。
-            let cleanUrl = sourceUrl;
-            try { if (sourceUrl.startsWith('http')) cleanUrl = new URL(sourceUrl).pathname; } catch { /* not a URL */ }
-            cleanUrl = decodeURIComponent(cleanUrl.split('?')[0]);
-            if (!cleanUrl.startsWith('/')) cleanUrl = '/' + cleanUrl;
-            // 兼容旧 /assets/ 前缀
-            if (cleanUrl.startsWith('/assets/images/')) cleanUrl = cleanUrl.replace('/assets/images/', '/library/images/');
-            if (cleanUrl.startsWith('/assets/videos/')) cleanUrl = cleanUrl.replace('/assets/videos/', '/library/videos/');
-            const onDisk = libUrlToPath(LIBRARY_DIR, cleanUrl);
-            if (!onDisk || !fs.existsSync(onDisk)) {
-                return res.status(404).json({ error: "Source file not found", debug: { sourceUrl, cleanUrl } });
+            // 本画布 OSS 公开 URL:直接引用该 URL(其本地双写副本用于校验存在)。
+            const ossLocal = libUrlToPath(LIBRARY_DIR, sourceUrl); // libUrlToPath 认完整 OSS URL
+            if (sourceUrl.startsWith('http') && ossLocal) {
+                if (!fs.existsSync(ossLocal)) return res.status(404).json({ error: 'Source file not found', debug: { sourceUrl } });
+                url = sourceUrl;
+                assetType = /\.(mp4|webm|mov)$/i.test(sourceUrl.split('?')[0]) ? 'video' : 'image';
+            } else {
+                let cleanUrl = sourceUrl;
+                try { if (sourceUrl.startsWith('http')) cleanUrl = new URL(sourceUrl).pathname; } catch { /* not a URL */ }
+                cleanUrl = decodeURIComponent(cleanUrl.split('?')[0]);
+                if (!cleanUrl.startsWith('/')) cleanUrl = '/' + cleanUrl;
+                // 兼容旧 /assets/ 前缀
+                if (cleanUrl.startsWith('/assets/images/')) cleanUrl = cleanUrl.replace('/assets/images/', '/library/images/');
+                if (cleanUrl.startsWith('/assets/videos/')) cleanUrl = cleanUrl.replace('/assets/videos/', '/library/videos/');
+                const onDisk = libUrlToPath(LIBRARY_DIR, cleanUrl);
+                if (!onDisk || !fs.existsSync(onDisk)) {
+                    return res.status(404).json({ error: "Source file not found", debug: { sourceUrl, cleanUrl } });
+                }
+                url = cleanUrl; // 指针,零拷贝
+                assetType = /\.(mp4|webm|mov)$/i.test(cleanUrl) ? 'video' : 'image';
             }
-            url = cleanUrl; // 指针,零拷贝
-            assetType = /\.(mp4|webm|mov)$/i.test(cleanUrl) ? 'video' : 'image';
         }
 
         const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
@@ -690,7 +647,7 @@ app.post('/api/workflows', async (req, res) => {
 
         // Sanitize nodes: convert any base64 data to file URLs before saving
         if (workflow.nodes) {
-            workflow.nodes = sanitizeWorkflowNodes(workflow.nodes);
+            workflow.nodes = await sanitizeWorkflowNodes(workflow.nodes);
         }
 
         fs.writeFileSync(filePath, JSON.stringify(workflow, null, 2));
@@ -714,26 +671,34 @@ const BUNDLED_WORKFLOWS_DIR = path.join(__dirname, '..', 'public', 'workflows');
  * 复制到 destAbsDir,并把 URL 重写为 destUrlPrefix/新文件名。源缺失则保留原 URL。
  * 用于「发布到公共」「fork 到个人」——工作流是文档,跨边界深拷贝(含图片),各自独立。
  */
-function copyWorkflowMedia(workflow, destAbsDir, destUrlPrefix) {
+async function copyWorkflowMedia(workflow, destAbsDir, destUrlPrefix) {
     fs.mkdirSync(destAbsDir, { recursive: true });
     const FIELDS = ['resultUrl', 'lastFrame', 'editorCanvasData', 'editorBackgroundUrl'];
-    const copyOne = (url) => {
-        if (!url || typeof url !== 'string' || !url.startsWith('/library/')) return url;
-        const src = libUrlToPath(LIBRARY_DIR, url);
+    const copyOne = async (url) => {
+        if (!url || typeof url !== 'string') return url;
+        const src = libUrlToPath(LIBRARY_DIR, url); // 认 /library/ 与本画布 OSS URL
         if (!src || !fs.existsSync(src)) return url;
         const ext = path.extname(src) || '.png';
         const fname = `${crypto.randomUUID()}${ext}`;
-        try { fs.copyFileSync(src, path.join(destAbsDir, fname)); } catch { return url; }
-        return `${destUrlPrefix}/${fname}`;
+        const destLocal = path.join(destAbsDir, fname);
+        try { fs.copyFileSync(src, destLocal); } catch { return url; }
+        const localUrl = `${destUrlPrefix}/${fname}`;
+        if (ossEnabled()) {
+            try {
+                const rel = path.relative(LIBRARY_DIR, destLocal).split(path.sep).join('/');
+                return await uploadLibraryRel(fs.readFileSync(destLocal), rel, mimeFromName(fname));
+            } catch (e) { console.warn('[oss] copyWorkflowMedia upload failed:', e.message); }
+        }
+        return localUrl;
     };
     if (Array.isArray(workflow.nodes)) {
-        workflow.nodes = workflow.nodes.map(n => {
+        workflow.nodes = await Promise.all(workflow.nodes.map(async n => {
             const c = { ...n };
-            for (const f of FIELDS) if (c[f]) c[f] = copyOne(c[f]);
+            for (const f of FIELDS) if (c[f]) c[f] = await copyOne(c[f]);
             return c;
-        });
+        }));
     }
-    if (workflow.coverUrl) workflow.coverUrl = copyOne(workflow.coverUrl);
+    if (workflow.coverUrl) workflow.coverUrl = await copyOne(workflow.coverUrl);
     return workflow;
 }
 
@@ -801,7 +766,7 @@ app.post('/api/public-workflows', async (req, res) => {
         const newId = crypto.randomUUID();
         const pub = { ...src, id: newId, sourceWorkflowId: workflowId, publishedBy: req.user.id, publishedAt: new Date().toISOString(), source: 'user' };
         delete pub.ownerId;
-        copyWorkflowMedia(pub, path.join(PUBLIC_WORKFLOWS_DIR, 'assets', newId), `/library/public-workflows/assets/${newId}`);
+        await copyWorkflowMedia(pub, path.join(PUBLIC_WORKFLOWS_DIR, 'assets', newId), `/library/public-workflows/assets/${newId}`);
         fs.writeFileSync(path.join(PUBLIC_WORKFLOWS_DIR, `${newId}.json`), JSON.stringify(pub, null, 2));
         res.status(201).json({ success: true, id: newId });
     } catch (error) {
@@ -823,7 +788,7 @@ app.post('/api/workflows/fork', async (req, res) => {
         const newId = crypto.randomUUID();
         const fork = { ...src, id: newId, ownerId: req.user.id, title: src.title || '未命名', forkedFrom: publicId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
         delete fork.publishedBy; delete fork.publishedAt; delete fork.source; delete fork.sourceWorkflowId;
-        copyWorkflowMedia(fork, path.join(LIBRARY_DIR, 'users', req.user.id, 'wf-assets', newId), `/library/users/${req.user.id}/wf-assets/${newId}`);
+        await copyWorkflowMedia(fork, path.join(LIBRARY_DIR, 'users', req.user.id, 'wf-assets', newId), `/library/users/${req.user.id}/wf-assets/${newId}`);
         fs.writeFileSync(path.join(WORKFLOWS_DIR, `${newId}.json`), JSON.stringify(fork, null, 2));
         res.status(201).json({ success: true, id: newId });
     } catch (error) {
