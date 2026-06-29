@@ -19,6 +19,7 @@ import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
+import { isExempt, quote, charge } from './services/billing.js';
 import modelsRoutes from './routes/models.js';
 import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
@@ -952,6 +953,12 @@ app.post('/api/gemini/describe-image', async (req, res) => {
             return res.status(400).json({ error: 'Image URL is required' });
         }
 
+        // 积分预检（看图识别走视觉模型）
+        if (!isExempt(req.user)) {
+            const q = quote(req.user, 'vision', getKey('VISION_MODEL'), {});
+            if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
+        }
+
         // Handle base64 or file URL → 统一成 data URL 供 OpenAI vision 使用
         let visionDataUrl;
 
@@ -1031,6 +1038,11 @@ app.post('/api/gemini/describe-image', async (req, res) => {
         });
 
         if (!text) console.warn('[DescribeImage] Warning: empty response.');
+        // 成功后扣费（看图/视觉）
+        if (!isExempt(req.user)) {
+            try { charge(req.user, { category: 'vision', modelId: visionModel, params: {}, refId: null }); }
+            catch (e) { console.error('[billing] charge vision failed:', e.message); }
+        }
         res.json({ description: text });
 
     } catch (error) {
@@ -1047,6 +1059,12 @@ app.post('/api/gemini/optimize-prompt', async (req, res) => {
 
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
+        }
+
+        // 积分预检（提示词优化走文字模型）
+        if (!isExempt(req.user)) {
+            const q = quote(req.user, 'text', getKey('TEXT_MODEL'), {});
+            if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
         }
 
         const systemInstruction = "You are an expert video prompt engineer. Your goal is to rewrite the user's prompt to be descriptive, visual, and optimized for AI video generation models like Veo, Kling, and Hailuo. detailed, cinematic, and focused on motion and atmosphere. Keep it under 60 words. Output ONLY the rewritten prompt.";
@@ -1074,6 +1092,11 @@ app.post('/api/gemini/optimize-prompt', async (req, res) => {
         // Clean up text (remove quotes if present)
         text = text.trim().replace(/^["']|["']$/g, '');
 
+        // 成功后扣费（文字·提示词优化）
+        if (!isExempt(req.user)) {
+            try { charge(req.user, { category: 'text', modelId: textModel, params: {}, refId: null }); }
+            catch (e) { console.error('[billing] charge text(optimize) failed:', e.message); }
+        }
         res.json({ optimizedPrompt: text });
 
     } catch (error) {
@@ -1598,12 +1621,23 @@ app.post('/api/chat', async (req, res) => {
         return res.status(403).json({ error: '无权访问该会话' });
     }
 
+    // 积分预检（文字对话走文字模型）——必须在开启 SSE 之前，才能返回 402 JSON
+    if (!isExempt(req.user)) {
+        const q = quote(req.user, 'text', getKey('TEXT_MODEL'), {});
+        if (!q.ok) return res.status(402).json({ error: '积分不足', balance: q.balanceUnits / 100, price: q.priceUnits / 100 });
+    }
+
     const send = startSSE(res);
     try {
         const result = await chatAgent.sendMessage(sessionId, message, media, (delta) => {
             if (delta) send({ type: 'delta', text: delta });
         }, req.user.id);
         await emitAgentResult(send, result);
+        // 成功后扣费（文字对话；续轮 /api/chat/tools 不重复扣）
+        if (!isExempt(req.user)) {
+            try { charge(req.user, { category: 'text', modelId: getKey('TEXT_MODEL'), params: {}, refId: sessionId }); }
+            catch (e) { console.error('[billing] charge text(chat) failed:', e.message); }
+        }
         res.end();
     } catch (error) {
         console.error("Chat API Error:", error);
