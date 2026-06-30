@@ -12,7 +12,7 @@ import { generateKlingVideo, generateKlingImage, generateKlingMultiImage } from 
 import { generateHailuoVideo } from '../services/hailuo.js';
 import { generateOpenAIImage } from '../services/openai.js';
 import { resolveImageToBase64, saveBufferToFile, userMediaDir } from '../utils/imageHelpers.js';
-import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
+import { generateGpt2apiImage, generateGpt2apiVideo, submitGpt2apiVideo, checkGpt2apiVideo, downloadVideoFromCandidates, isGpt2apiImageModel, isGpt2apiVideoModel } from '../services/gpt2api.js';
 import { generateFlow2apiImage, generateFlow2apiVideo, isFlow2apiImageModel, isFlow2apiVideoModel } from '../services/flow2api.js';
 import { resolveModel } from '../db/registry.js';
 import { isExempt, quote, charge } from '../services/billing.js';
@@ -39,6 +39,43 @@ function pickEndpoint(category, requestedModel, fb) {
 // 正在进行的生成任务（nodeId 集合，进程内存）。用于让状态接口区分
 // 「还在生成中」和「应用重启后任务已中断」——后者前端可以直接标记失败让用户重试。
 const activeGenerations = new Set();
+
+/**
+ * 把视频 Buffer 落盘到 owner 的视频目录 + 写元数据 + 扣费，返回 resultUrl。
+ * 供同步视频路径与异步状态路由共用，避免逻辑分叉。
+ */
+async function finalizeVideo(req, videoBuffer, { nodeId, prompt, title, aspectRatio, resolution, duration, videoModel }) {
+    const { VIDEOS_DIR } = req.app.locals;
+    const ownerVideosDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'videos');
+    const saved = await saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
+    const resultUrl = saved.url;
+
+    // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
+    // 否则同一节点反复生成会互相覆盖）。nodeId 仅作为字段保存供恢复用。
+    const metadata = {
+        id: saved.id,
+        nodeId: nodeId || null,  // 仅用于「刷新后恢复」按节点查找，不参与历史去重
+        ownerId: req.user?.id,  // P1：归属当前用户
+        filename: saved.filename,
+        url: resultUrl,
+        prompt: prompt,
+        title: title || '',  // 节点标题（如「镜头 01 视频」），剪辑页素材列表用于区分镜头
+        model: videoModel || 'veo-3.1',
+        aspectRatio: aspectRatio || 'Auto',
+        resolution: resolution || 'Auto',
+        createdAt: new Date().toISOString(),
+        type: 'videos'
+    };
+    fs.writeFileSync(path.join(VIDEOS_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
+
+    console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
+    // 成功后扣费（管理员/总开关关 → 豁免）
+    if (!isExempt(req.user)) {
+        try { charge(req.user, { category: 'video', modelId: videoModel, params: { duration, resolution, tier: videoModel }, refId: nodeId || saved.id }); }
+        catch (e) { console.error('[billing] charge video failed:', e.message); }
+    }
+    return resultUrl;
+}
 
 // ============================================================================
 // IMAGE GENERATION
@@ -310,15 +347,19 @@ router.post('/generate-video', async (req, res) => {
             });
 
         } else if (isGpt2api) {
-            // --- 统一视频生成（设置：网址 / KEY / 模型名）---
+            // --- 统一视频生成（设置：网址 / KEY / 模型名）：异步提交 + 前端轮询状态 ---
+            // 这条路经过 Cloudflare 隧道（CF Free ~100s HTTP 超时），而 fp 出视频 + 去水印
+            // 常常 >100s，故不在单个请求里阻塞等待：先提交拿 taskId 立即返回，前端轮询
+            // /generate-video/status/:taskId 完成后再下载落 OSS。
             if (!VIDEO_API_KEY) {
                 return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
             }
             // 优先用模型注册表解析 baseUrl/key/模型名；无匹配回退到「设置」全局视频配置。
             const ep = pickEndpoint('video', videoModel, { baseUrl: VIDEO_API_URL, apiKey: VIDEO_API_KEY, model: VIDEO_MODEL || 'veo3.1-lite' });
             if (!ep.apiKey) return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」或「管理后台→模型配置」中填写" });
-            console.log(`Using video model: ${ep.model} @ ${ep.baseUrl}, duration: ${duration || 6}s`);
-            videoBuffer = await generateGpt2apiVideo({
+            console.log(`Using video model (async): ${ep.model} @ ${ep.baseUrl}, duration: ${duration || 6}s`);
+
+            const submitted = await submitGpt2apiVideo({
                 prompt,
                 imageBase64,
                 lastFrameBase64,
@@ -330,6 +371,18 @@ router.post('/generate-video', async (req, res) => {
                 baseUrl: ep.baseUrl,
                 apiKey: ep.apiKey,
             });
+
+            // 下游极少数情况下会同步直接返回结果项：当作同步路径立即 finalize。
+            if (submitted.item && submitted.item.url) {
+                // 复用 service 的下载（含 grok 代理回退）
+                const videoBufferSync = await downloadVideoFromCandidates([submitted.item.url]);
+                const resultUrl = await finalizeVideo(req, videoBufferSync, { nodeId, prompt, title, aspectRatio, resolution, duration, videoModel });
+                return res.json({ resultUrl });
+            }
+
+            // 异步：立即返回 taskId，前端轮询状态接口。
+            console.log(`[async-video] submitted taskId=${submitted.taskId} model=${ep.model}`);
+            return res.json({ taskId: submitted.taskId, async: true });
 
         } else if (isKlingModel) {
             // --- KLING AI VIDEO GENERATION ---
@@ -448,35 +501,8 @@ router.post('/generate-video', async (req, res) => {
             return res.status(400).json({ error: `不支持的视频模型: ${videoModel || ''}` });
         }
 
-        // Save media into the owner's namespaced dir (P1)
-        const ownerVideosDir = userMediaDir(req.app.locals.LIBRARY_DIR, req.user?.id, 'videos');
-        const saved = await saveBufferToFile(videoBuffer, ownerVideosDir, 'vid', 'mp4');
-        const resultUrl = saved.url;
-
-        // 每次生成 = 一条独立历史：文件名/ID 用唯一的 saved.id（不再用 nodeId，
-        // 否则同一节点反复生成会互相覆盖）。nodeId 仅作为字段保存供恢复用。
-        const metadata = {
-            id: saved.id,
-            nodeId: nodeId || null,  // 仅用于「刷新后恢复」按节点查找，不参与历史去重
-            ownerId: req.user?.id,  // P1：归属当前用户
-            filename: saved.filename,
-            url: resultUrl,
-            prompt: prompt,
-            title: title || '',  // 节点标题（如「镜头 01 视频」），剪辑页素材列表用于区分镜头
-            model: videoModel || 'veo-3.1',
-            aspectRatio: aspectRatio || 'Auto',
-            resolution: resolution || 'Auto',
-            createdAt: new Date().toISOString(),
-            type: 'videos'
-        };
-        fs.writeFileSync(path.join(VIDEOS_DIR, `${saved.id}.json`), JSON.stringify(metadata, null, 2));
-
-        console.log(`Video saved: ${resultUrl} (model: ${videoModel || 'veo-3.1'})`);
-        // 成功后扣费（管理员/总开关关 → 豁免）
-        if (!isExempt(req.user)) {
-            try { charge(req.user, { category: 'video', modelId: videoModel, params: { duration, resolution, tier: videoModel }, refId: nodeId || saved.id }); }
-            catch (e) { console.error('[billing] charge video failed:', e.message); }
-        }
+        // Save media into the owner's namespaced dir (P1)（同步路径：kling / hailuo / flow2api）
+        const resultUrl = await finalizeVideo(req, videoBuffer, { nodeId, prompt, title, aspectRatio, resolution, duration, videoModel });
         return res.json({ resultUrl });
 
     } catch (error) {
@@ -484,6 +510,56 @@ router.post('/generate-video', async (req, res) => {
         res.status(500).json({ error: error.message || "Video generation failed" });
     } finally {
         if (reqNodeId) activeGenerations.delete(reqNodeId);
+    }
+});
+
+/**
+ * 异步视频：单次查询 fp 任务状态。完成则下载视频 + 落 OSS 返回 resultUrl。
+ *   GET /generate-video/status/:taskId?model=<videoModel>&nodeId=&title=&aspectRatio=&resolution=&duration=
+ * 响应：
+ *   - 处理中  → { status: 'processing' }
+ *   - 完成    → { status: 'completed', resultUrl }
+ *   - 失败    → { status: 'failed', error }
+ * 鉴权与 POST 路由一致（/api 级 requireAuth），owner 取自 req.user。
+ * 仅服务 gpt2api(fp) 路径；其它视频模型仍走 POST 同步返回 resultUrl，不会调用本接口。
+ */
+router.get('/generate-video/status/:taskId', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const { model: videoModel, nodeId, title, aspectRatio, resolution, duration } = req.query;
+        const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL } = req.app.locals;
+
+        if (!taskId) return res.status(400).json({ status: 'failed', error: '缺少 taskId' });
+
+        // 重新解析 fp 端点 / key / base（与 POST 路由一致），用于查询同一任务。
+        const ep = pickEndpoint('video', videoModel, { baseUrl: VIDEO_API_URL, apiKey: VIDEO_API_KEY, model: VIDEO_MODEL || 'veo3.1-lite' });
+        if (!ep.apiKey) return res.status(500).json({ status: 'failed', error: '未配置视频模型 KEY，请在「设置」或「管理后台→模型配置」中填写' });
+
+        const result = await checkGpt2apiVideo(taskId, ep.apiKey, ep.baseUrl);
+
+        if (result.status === 'processing') {
+            return res.json({ status: 'processing' });
+        }
+        if (result.status === 'failed') {
+            return res.json({ status: 'failed', error: result.error || 'gpt2api 任务失败' });
+        }
+
+        // completed：下载视频（含 grok 代理回退）→ 落盘 + 元数据 + 扣费。
+        // 注意：双重轮询可能重复进入此分支；finalizeVideo 每次生成唯一 id，不会崩溃，
+        // 偶发重复落一份文件是可接受的（前端只用最后一次返回的 url）。
+        const candidates = result.urlCandidates || (result.url ? [result.url] : []);
+        const videoBuffer = await downloadVideoFromCandidates(candidates);
+        const resultUrl = await finalizeVideo(req, videoBuffer, {
+            nodeId, prompt: req.query.prompt, title, aspectRatio, resolution,
+            duration: duration ? Number(duration) : undefined,
+            videoModel,
+        });
+        return res.json({ status: 'completed', resultUrl });
+
+    } catch (error) {
+        console.error("Async Video Status Error:", error);
+        // 下载/落盘失败：不当作任务永久失败，让前端继续轮询重试（除非已超总时限）。
+        return res.status(500).json({ status: 'failed', error: error.message || '视频状态查询失败' });
     }
 });
 

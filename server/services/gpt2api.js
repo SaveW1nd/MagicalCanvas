@@ -214,13 +214,8 @@ export async function generateGpt2apiImage({ prompt, imageBase64Array, aspectRat
     return { buffer: Buffer.from(item.b64_json, 'base64'), format: 'png' };
 }
 
-/**
- * 视频生成（文生视频 / 图生视频）。返回 Buffer(mp4)。
- */
-export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
-    if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
-    const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
-
+/** 构造视频生成请求体（submit / 兼容旧同步路径共用） */
+function buildVideoBody({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model }) {
     const startImg = toImageInput(imageBase64);
     const endImg = toImageInput(lastFrameBase64);
     // Ingredients（R2V 多图参考）：最多 8 张，转成 data URL / URL 输入
@@ -240,29 +235,120 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
     if (endImg) body.last_frame = endImg;
     // Ingredients 多图参考 → fp 适配端点识别 Ingredients_images
     if (ingredientImgs.length > 0) body.Ingredients_images = ingredientImgs;
+    return body;
+}
+
+/**
+ * 根据 result item + taskId 选出可下载的视频地址候选（含中转站代理回退）。
+ * grok-imagine-video 等模型的 result.url 是上游原始地址（assets.grok.com，
+ * 需要 grok.com 登录态，直接下载 403），但代理地址 /api/v1/gen/assets/{taskId}/0.mp4 可以正常下载。
+ */
+function videoUrlCandidates(itemUrl, taskId, base) {
+    const origin = base.replace(/\/v\d+$/, '');
+    const proxyUrl = taskId ? `${origin}/api/v1/gen/assets/${taskId}/0.mp4` : null;
+    const preferProxy = String(itemUrl).includes('assets.grok.com');
+    return preferProxy
+        ? [proxyUrl, itemUrl].filter(Boolean)
+        : [itemUrl, proxyUrl].filter(Boolean);
+}
+
+/**
+ * 异步：提交一个视频生成任务，立即返回（不轮询）。
+ * - 一般返回 { taskId }：调用方后续用 checkGpt2apiVideo 单次查询状态。
+ * - 若下游直接同步返回结果项，则返回 { item, taskId }，调用方可直接 finalize。
+ */
+export async function submitGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
+    if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
+    const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
+
+    const body = buildVideoBody({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model });
 
     const res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || data?.error || `视频请求失败 (HTTP ${res.status})`);
 
-    const taskId = data.task_id || data.id;
-    let item = extractSyncItem(data);
+    const taskId = data.task_id || data.id || null;
+    const item = extractSyncItem(data);
+    if (!item && !taskId) throw new Error('视频接口未返回结果或 task_id');
+    return { taskId, item };
+}
+
+/**
+ * 异步：对一个视频任务做「一次」状态查询（非阻塞，不进轮询循环）。
+ * 状态字段命名与 pollTask 保持一致：succeeded / failed / refunded / queued / running。
+ * 返回 { status: 'processing'|'completed'|'failed', url?, error? }。
+ * 完成时 url 已是可下载的最优地址（含 grok 代理回退后的首选项）。
+ */
+export async function checkGpt2apiVideo(taskId, apiKey, baseUrl) {
+    if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
+    if (!taskId) throw new Error('缺少 taskId');
+    const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
+    const pollUrl = `${base}/video/generations/${taskId}`;
+
+    let res, data;
+    try {
+        res = await fetch(pollUrl, { headers: authHeaders(apiKey) });
+        data = await res.json().catch(() => ({}));
+    } catch (e) {
+        // 中转站偶发网关抖动：单次查询失败不当作任务失败，让前端继续轮询。
+        console.warn(`[gpt2api] 视频状态查询请求失败（视为处理中，稍后重试）:`, e.message || e);
+        return { status: 'processing' };
+    }
+
+    if (!res.ok) {
+        // 403/5xx 等通常是限流/网关抖动，任务实际仍在跑 —— 当作处理中，避免误判失败。
+        console.warn(`[gpt2api] 视频状态返回 HTTP ${res.status}（视为处理中）:`, data?.error?.message || data?.error || '');
+        return { status: 'processing' };
+    }
+
+    const status = data.status;
+    if (status === 'succeeded') {
+        const item = data?.result?.data?.[0];
+        if (!item || !item.url) return { status: 'failed', error: 'gpt2api 返回结果缺少 url' };
+        const candidates = videoUrlCandidates(item.url, taskId, base);
+        return { status: 'completed', url: candidates[0], urlCandidates: candidates };
+    }
+    if (status === 'failed' || status === 'refunded') {
+        return { status: 'failed', error: data?.error?.message || data?.error || 'gpt2api 任务失败' };
+    }
+    // queued / running / 其它 → 仍在处理
+    return { status: 'processing' };
+}
+
+/**
+ * 视频生成（文生视频 / 图生视频）。返回 Buffer(mp4)。
+ * 同步阻塞版（保留供非异步调用方使用）：内部用 submit + pollTask。
+ */
+export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
+    const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
+
+    const { taskId, item: syncItem } = await submitGpt2apiVideo({
+        prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey,
+    });
+
+    let item = syncItem;
     if (!item) {
-        if (!taskId) throw new Error('视频接口未返回结果或 task_id');
         item = await pollTask(`${base}/video/generations/${taskId}`, apiKey, { timeoutMs: 900000 });
     }
 
-    // 中转站自带结果代理：/api/v1/gen/assets/{taskId}/0.mp4。
-    // grok-imagine-video 等模型的 result.url 是上游原始地址（assets.grok.com，
-    // 需要 grok.com 登录态，直接下载 403），但代理地址可以正常下载。
-    const origin = base.replace(/\/v\d+$/, '');
-    const proxyUrl = taskId ? `${origin}/api/v1/gen/assets/${taskId}/0.mp4` : null;
-    const preferProxy = String(item.url).includes('assets.grok.com');
+    const candidates = videoUrlCandidates(item.url, taskId, base);
 
-    const candidates = preferProxy
-        ? [proxyUrl, item.url].filter(Boolean)
-        : [item.url, proxyUrl].filter(Boolean);
+    let lastErr;
+    for (const url of candidates) {
+        try {
+            return await downloadToBuffer(url, { retries: 1 });
+        } catch (e) {
+            lastErr = e;
+            console.warn(`[gpt2api] 视频下载失败 (${url})，尝试备用地址:`, e.message);
+        }
+    }
+    throw lastErr || new Error('视频下载失败');
+}
 
+/** 按候选地址列表下载视频 Buffer（异步状态路由 finalize 用，含代理回退） */
+export async function downloadVideoFromCandidates(urlCandidates) {
+    const candidates = (urlCandidates || []).filter(Boolean);
+    if (candidates.length === 0) throw new Error('视频下载地址为空');
     let lastErr;
     for (const url of candidates) {
         try {
