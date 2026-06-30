@@ -40,6 +40,57 @@ function pickEndpoint(category, requestedModel, fb) {
 // 「还在生成中」和「应用重启后任务已中断」——后者前端可以直接标记失败让用户重试。
 const activeGenerations = new Set();
 
+// 异步视频任务（nodeId → fp 任务上下文）。fp 出视频 + 去水印常 >100s，单条同步请求会被
+// Cloudflare 隧道 ~100s 截断；故 POST 提交即返回，任务上下文存这里，由 /generation-status/:nodeId
+// 查 fp 并「幂等完成」下载落库。前端实时轮询与「刷新后恢复钩子」打的是同一个端点，
+// 靠下面的 completion promise 去重，保证只下载/扣费一次。
+const asyncVideoTasks = new Map();
+const ASYNC_VIDEO_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * 查询 nodeId 对应的异步视频任务；完成则下载视频 + 落库（并发只落一次）。
+ * 返回 { status:'success', resultUrl, type, createdAt } | { status:'processing' }
+ *      | { status:'failed', error } | null（该 nodeId 非异步任务）。
+ */
+async function resolveAsyncVideo(req, nodeId) {
+    const t = asyncVideoTasks.get(nodeId);
+    if (!t) return null;
+    // 已有进行中的完成流程 → 复用同一 promise（去重下载/扣费）。
+    if (t.completion) {
+        try { return await t.completion; } catch { return { status: 'processing' }; }
+    }
+    if (Date.now() - t.createdAt > ASYNC_VIDEO_TTL_MS) {
+        asyncVideoTasks.delete(nodeId);
+        return { status: 'failed', error: '视频任务超时（30 分钟未完成）' };
+    }
+    const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL } = req.app.locals;
+    const ep = pickEndpoint('video', t.videoModel, { baseUrl: VIDEO_API_URL, apiKey: VIDEO_API_KEY, model: VIDEO_MODEL || 'veo3.1-lite' });
+    const r = await checkGpt2apiVideo(t.taskId, ep.apiKey, ep.baseUrl);
+    if (r.status === 'processing') return { status: 'processing' };
+    if (r.status === 'failed') { asyncVideoTasks.delete(nodeId); return { status: 'failed', error: r.error || 'gpt2api 任务失败' }; }
+    // completed：check-and-set 是同步的（中间无 await），并发轮询只会启动一次下载。
+    if (!t.completion) {
+        t.completion = (async () => {
+            const candidates = r.urlCandidates || (r.url ? [r.url] : []);
+            const buf = await downloadVideoFromCandidates(candidates);
+            const url = await finalizeVideo(req, buf, {
+                nodeId, prompt: t.prompt, title: t.title,
+                aspectRatio: t.aspectRatio, resolution: t.resolution,
+                duration: t.duration, videoModel: t.videoModel,
+            });
+            return { status: 'success', resultUrl: url, type: 'video', createdAt: new Date().toISOString() };
+        })();
+    }
+    try {
+        const out = await t.completion;
+        asyncVideoTasks.delete(nodeId); // 已落库；后续 /generation-status 走文件扫描即可
+        return out;
+    } catch (e) {
+        t.completion = undefined; // 瞬时下载失败 → 允许下次轮询重试
+        return { status: 'processing' };
+    }
+}
+
 /**
  * 把视频 Buffer 落盘到 owner 的视频目录 + 写元数据 + 扣费，返回 resultUrl。
  * 供同步视频路径与异步状态路由共用，避免逻辑分叉。
@@ -380,9 +431,17 @@ router.post('/generate-video', async (req, res) => {
                 return res.json({ resultUrl });
             }
 
-            // 异步：立即返回 taskId，前端轮询状态接口。
-            console.log(`[async-video] submitted taskId=${submitted.taskId} model=${ep.model}`);
-            return res.json({ taskId: submitted.taskId, async: true });
+            // 异步：登记 nodeId→任务上下文，立即返回。前端与「刷新恢复钩子」都轮询
+            // /generation-status/:nodeId（而非按 taskId），从而跨页面刷新也能恢复。
+            if (nodeId) {
+                asyncVideoTasks.set(nodeId, {
+                    taskId: submitted.taskId, videoModel,
+                    prompt, title, aspectRatio, resolution, duration,
+                    createdAt: Date.now(),
+                });
+            }
+            console.log(`[async-video] submitted taskId=${submitted.taskId} nodeId=${nodeId} model=${ep.model}`);
+            return res.json({ taskId: submitted.taskId, nodeId, async: true });
 
         } else if (isKlingModel) {
             // --- KLING AI VIDEO GENERATION ---
@@ -605,6 +664,16 @@ router.get('/generation-status/:nodeId', async (req, res) => {
         const vidMeta = findLatestByNode(VIDEOS_DIR);
         if (vidMeta) {
             return res.json({ status: 'success', resultUrl: vidMeta.url || `/library/videos/${vidMeta.filename}`, type: 'video', createdAt: vidMeta.createdAt });
+        }
+
+        // 异步视频任务在飞行中？查 fp（完成则下载落库）。实时轮询与刷新恢复共用此路径。
+        if (asyncVideoTasks.has(nodeId)) {
+            const out = await resolveAsyncVideo(req, nodeId);
+            if (out) {
+                if (out.status === 'success') return res.json(out);
+                if (out.status === 'failed') return res.json({ status: 'failed', error: out.error });
+                return res.json({ status: 'pending' }); // processing
+            }
         }
 
         // 没有结果文件：区分「本进程还在生成」和「应用重启后任务已中断」

@@ -109,9 +109,11 @@ export const generateVideo = async (params: GenerateVideoParams): Promise<string
       return data.resultUrl;
     }
 
-    // 异步路径：轮询状态接口。
-    if (data.taskId) {
-      return await pollVideoStatus(data.taskId, params);
+    // 异步路径：后端只提交、立即返回；轮询 /generation-status/:nodeId（与刷新恢复钩子同端点）。
+    if (data.async || data.taskId) {
+      const nodeId = params.nodeId || data.nodeId;
+      if (!nodeId) throw new Error('异步视频缺少 nodeId');
+      return await pollVideoStatus(nodeId);
     }
 
     throw new Error("No video data returned from server");
@@ -123,19 +125,11 @@ export const generateVideo = async (params: GenerateVideoParams): Promise<string
 };
 
 /**
- * 轮询异步视频任务状态，直至 completed（返回 resultUrl）或 failed（抛错）。
- * 状态接口需要的查询参数随轮询带上（至少 model，用于后端重新解析 fp 端点）。
+ * 轮询 /generation-status/:nodeId 直至 success（返回 resultUrl）或 failed（抛错）。
+ * 按 nodeId（而非 taskId）：与「刷新后恢复钩子」打同一个后端端点 —— 后端按 nodeId 查 fp、
+ * 幂等下载落库，故页面刷新丢了内存里的轮询循环后，恢复钩子也能接着把任务跑完。
  */
-async function pollVideoStatus(taskId: string, params: GenerateVideoParams): Promise<string> {
-  const qs = new URLSearchParams();
-  qs.set('model', params.videoModel || '');
-  if (params.nodeId) qs.set('nodeId', params.nodeId);
-  if (params.title) qs.set('title', params.title);
-  if (params.aspectRatio) qs.set('aspectRatio', params.aspectRatio);
-  if (params.resolution) qs.set('resolution', params.resolution);
-  if (params.duration != null) qs.set('duration', String(params.duration));
-  if (params.prompt) qs.set('prompt', params.prompt);
-
+async function pollVideoStatus(nodeId: string): Promise<string> {
   const start = Date.now();
   while (true) {
     if (Date.now() - start > VIDEO_POLL_MAX_MS) {
@@ -143,30 +137,18 @@ async function pollVideoStatus(taskId: string, params: GenerateVideoParams): Pro
     }
     await sleep(VIDEO_POLL_INTERVAL_MS);
 
-    let statusResp: Response;
+    let resp: Response;
     try {
-      statusResp = await fetch(`/api/generate-video/status/${encodeURIComponent(taskId)}?${qs.toString()}`);
+      resp = await fetch(`/api/generation-status/${encodeURIComponent(nodeId)}`);
     } catch {
-      // 网络抖动：继续轮询。
-      continue;
+      continue; // 网络抖动：继续轮询
     }
 
-    const statusData = await statusResp.json().catch(() => ({}));
+    const d = await resp.json().catch(() => ({}));
+    if (!resp.ok) continue;
 
-    if (!statusResp.ok) {
-      // 后端把下载/网关抖动也归为可重试，这里也继续轮询（除非明确 failed）。
-      if (statusData?.status === 'failed' && statusData?.error) {
-        throw new Error(statusData.error);
-      }
-      continue;
-    }
-
-    if (statusData.status === 'completed' && statusData.resultUrl) {
-      return statusData.resultUrl;
-    }
-    if (statusData.status === 'failed') {
-      throw new Error(statusData.error || '视频生成失败');
-    }
-    // processing → 继续轮询
+    if (d.status === 'success' && d.resultUrl) return d.resultUrl;
+    if (d.status === 'failed') throw new Error(d.error || '视频生成失败');
+    // pending / stale / processing → 继续轮询
   }
 }

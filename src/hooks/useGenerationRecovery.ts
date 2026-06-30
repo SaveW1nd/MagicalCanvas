@@ -62,6 +62,13 @@ export const useGenerationRecovery = ({
                     }
 
                     updateNode(nodeId, updates);
+                } else if (data.status === 'failed') {
+                    // 异步任务在 fp 侧明确失败（如 Google 超时/reCAPTCHA）→ 标记错误供重试。
+                    updateNode(nodeId, {
+                        status: NodeStatus.ERROR,
+                        errorMessage: data.error || '视频生成失败',
+                        generationStartTime: undefined,
+                    });
                 } else if (data.status === 'stale') {
                     // 服务器没有结果文件、也没有进行中的任务 → 生成在应用关闭/重启时中断了。
                     // 用 generationStartTime 防误判：刚发起的生成（图片转 base64 等准备阶段）
